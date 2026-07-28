@@ -28,9 +28,9 @@ export default function Points() {
 
   const load = useCallback(async () => {
     try { setData(await api<PointsData>("/points", { auth: true })); }
-    catch {}
+    catch { router.replace("/(auth)/login"); }
     finally { setLoading(false); }
-  }, []);
+  }, [router]);
 
   useEffect(() => { load(); }, [load]);
 

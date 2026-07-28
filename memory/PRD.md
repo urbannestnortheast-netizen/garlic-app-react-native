@@ -4,32 +4,31 @@
 A minimalist, aesthetic pastel shopping experience for home essentials, crockery, and decor curated for a young female audience. Inspired by Nestasia + Anthropologie design language.
 
 ## MVP Features
-- **Onboarding** with elegant hero + custom "Garlic — BY URBAN NEST" typographic wordmark (Cormorant Garamond italic + flourish lines)
-- **Auth**: signup (name/email/mobile/password) + login (email OR mobile + password), JWT-based
+- **Onboarding** with elegant hero + custom "Garlic — BY URBAN NEST" typographic wordmark
+- **Auth**: signup + login (email OR mobile + password), JWT-based
 - **Shop Home (Nestasia-style)**:
-  - Sticky brand-mark header + wishlist shortcut
+  - Header with logo + **search shortcut** + wishlist
   - Peach "SUMMER EDIT" promo banner
   - Round pastel category tiles (NEW, GIFTS, DINNERS, BOWLS, PLATTERS, DECOR, KITCHEN, GLASSWARE, COMFORT, COLLECTIONS)
-  - "Shop by Category" grid (Dining, Kitchen, Decor, Bath, Soft Furnishing, Accessories)
-  - Editorial sections (Free From Boring Dinners, Free From A Messy Kitchen, The Quiet Home) with 4-tile grids
-  - Curated Collections carousel (Modern Minimalist, Banjara, Wellness, Nautical, Jungle)
-  - Best Sellers grid with strike-through original prices for sale items
-- **Category detail** with sticky subcategory chips
-- **Collection detail** with hero + grid
-- **Gifts hub** with By Person / By Occasion toggle + pastel filter chips
-- **Product detail** with image gallery, sticky Add-to-Cart, wishlist toggle, **"Add to Nest Table" button** (choose which shortlist to add to)
-- **The Nest Table (Gift Registry)**: NEW
-  - Create named shortlists with occasion + personal message
-  - Auto-generated shareable URL (`/api/shortlists/share/{slug}` public endpoint)
-  - Public share view shows owner name + all products; friends can mark items as "Gifted" so others don't buy twice
-  - No user_id leaked in public payloads
-- **Cart** + **Checkout** (Razorpay hosted checkout via WebView, mock fallback)
-- **Orders** history with status badges
-- **Wishlist**: authenticated favorites synced to backend
-- **Admin panel** tabs:
-  - Products CRUD (full schema)
-  - Orders view + status management
-  - **Editorials inline editor**: edit title, subtitle, order, active toggle, add/remove tiles (label + image URL + subcategory filter)
+  - Category grid, Editorial sections (3), Curated Collections, Best Sellers
+- **Search screen** with live debounced results
+- **Category/Collection detail** pages
+- **Gifts hub** with By Person / By Occasion
+- **Product detail** with image gallery, sticky Add-to-Cart, wishlist, Add to Nest Table
+  - **Star rating summary** + **Reviews section** + "Write a Review" modal (1 review per user per product, upsert)
+- **The Nest Table (Gift Registry)** shareable via public link + owner earns 500 bonus pts per gift
+- **Cart** + **Checkout** with **Nest Points redemption toggle** (30% cap)
+- **Orders history** + **Order Detail with vertical delivery-tracking timeline** (Order Placed → Payment Confirmed → On the Way → Delivered)
+- **Nest Rewards** page: hero balance card (sage green), rules explanation, transaction history (earn/spend/referral)
+- **Wishlist** (auth-synced)
+- **Admin panel**: Products / Orders / Editorials tabs; order status updates append to timeline; editorials inline editor
+
+## Points Economy (Nest Rewards)
+- 2% back: **10 pts per ₹100 spent** (POINTS_RATE_PER_RUPEE = 0.1)
+- Redeem value: **1 pt = ₹0.10** (POINTS_REDEEM_VALUE = 0.10)
+- **500 pts (₹50)** bonus when a friend marks a gift on your Nest Table (first-time only)
+- Redemption capped at 30% of order subtotal
+- Points spent immediately on order create; earned on paid; mock-pay idempotent
 
 ## Design System
 - **Palette**: Sage green brand `#4A5F45` (from logo) + Peach/coral accent `#F5CBB6` + oat/cream neutrals
