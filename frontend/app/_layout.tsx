@@ -2,32 +2,53 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { LogBox } from "react-native";
+import { useFonts } from "expo-font";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
+import { AuthProvider } from "@/src/context/AuthContext";
+import { CartProvider } from "@/src/context/CartContext";
+import { colors } from "@/src/theme";
 
-
-// Disable logbox errors etc so that users can see the app
-// and agent works as expected.
-LogBox.ignoreAllLogs(true)
-
-// Keep the native splash visible from cold start until icon fonts register.
-// Required because @expo/vector-icons' componentDidMount fallback fires
-// Font.loadAsync against a broken vendor path if any <Icon> mounts before
-// the family is registered — which throws on Android Expo Go.
+LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [loaded, error] = useIconFonts();
+  const [iconsLoaded, iconsError] = useIconFonts();
+  const [fontsLoaded, fontsError] = useFonts({
+    CormorantGaramond: "https://fonts.gstatic.com/s/cormorantgaramond/v18/co3YmX5slCNuHLi8bLeY9MK7whWMhyjornFLsS6V7w.ttf",
+    CormorantGaramondBold: "https://fonts.gstatic.com/s/cormorantgaramond/v18/co3bmX5slCNuHLi8bLeY9MK7whWMhyjYrEPjuw72jc0.ttf",
+    DMSans: "https://fonts.gstatic.com/s/dmsans/v15/rP2Hp2ywxg089UriI5-g4vlH9VoD8CmcqZG40F9JadbnoEwAopxRRA.ttf",
+    DMSansMedium: "https://fonts.gstatic.com/s/dmsans/v15/rP2Hp2ywxg089UriI5-g4vlH9VoD8CmcqZG40F9JadbnoEwApJxRRA.ttf",
+    DMSansBold: "https://fonts.gstatic.com/s/dmsans/v15/rP2Hp2ywxg089UriI5-g4vlH9VoD8CmcqZG40F9JadbnoEwAvJxRRA.ttf",
+  });
+
+  const ready = (iconsLoaded || iconsError) && (fontsLoaded || fontsError);
 
   useEffect(() => {
-    if (loaded || error) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded, error]);
+    if (ready) SplashScreen.hideAsync();
+  }, [ready]);
 
-  // If the CDN is unreachable we fall through on error rather than wedging
-  // the app — icons will tofu, but the app still boots.
-  if (!loaded && !error) return null;
+  if (!ready) return null;
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <CartProvider>
+            <StatusBar style="dark" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: colors.surface },
+                animation: "fade",
+              }}
+            />
+          </CartProvider>
+        </AuthProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
 }
