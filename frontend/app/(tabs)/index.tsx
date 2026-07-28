@@ -80,9 +80,14 @@ export default function ShopScreen() {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
       <View style={styles.header} testID="shop-header">
         <BrandLogo size="md" testID="header-logo" />
-        <Pressable testID="wishlist-shortcut" onPress={() => router.push("/(tabs)/wishlist")} hitSlop={12} style={styles.headerHeart}>
-          <Feather name="heart" size={22} color={colors.onSurface} />
-        </Pressable>
+        <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center" }}>
+          <Pressable testID="search-shortcut" onPress={() => router.push("/search")} hitSlop={12} style={styles.headerHeart}>
+            <Feather name="search" size={22} color={colors.onSurface} />
+          </Pressable>
+          <Pressable testID="wishlist-shortcut" onPress={() => router.push("/(tabs)/wishlist")} hitSlop={12} style={styles.headerHeart}>
+            <Feather name="heart" size={22} color={colors.onSurface} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView

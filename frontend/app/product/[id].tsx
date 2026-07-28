@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Dimensions, Modal,
+  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Dimensions, Modal, TextInput,
 } from "react-native";
 import { Image } from "expo-image";
 import { Feather } from "@expo/vector-icons";
@@ -24,9 +24,12 @@ type Product = {
   material?: string;
   dimensions?: string;
   stock: number;
+  average_rating?: number;
+  review_count?: number;
 };
 
 type Shortlist = { id: string; name: string; occasion: string };
+type Review = { id: string; user_name: string; rating: number; title: string; body: string; created_at: string };
 
 export default function ProductDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -41,11 +44,17 @@ export default function ProductDetail() {
   const [slModalOpen, setSlModalOpen] = useState(false);
   const [shortlists, setShortlists] = useState<Shortlist[]>([]);
   const [addedToSl, setAddedToSl] = useState<string | null>(null);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [rvForm, setRvForm] = useState({ rating: 5, title: "", body: "" });
+  const [rvBusy, setRvBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const p = await api<Product>(`/products/${id}`);
       setProduct(p);
+      const rvs = await api<Review[]>(`/products/${id}/reviews`);
+      setReviews(rvs);
       if (user) {
         try {
           const list = await api<Product[]>("/wishlist", { auth: true });
@@ -104,6 +113,26 @@ export default function ProductDetail() {
     } catch {}
   };
 
+  const submitReview = async () => {
+    if (!product) return;
+    if (!user) return router.push("/(auth)/login");
+    setRvBusy(true);
+    try {
+      await api(`/products/${product.id}/reviews`, {
+        method: "POST", auth: true, body: rvForm,
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setReviewModalOpen(false);
+      setRvForm({ rating: 5, title: "", body: "" });
+      // Reload reviews + product summary
+      const rvs = await api<Review[]>(`/products/${product.id}/reviews`);
+      setReviews(rvs);
+      const p = await api<Product>(`/products/${product.id}`);
+      setProduct(p);
+    } catch {}
+    finally { setRvBusy(false); }
+  };
+
   if (loading || !product) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
@@ -147,6 +176,21 @@ export default function ProductDetail() {
         <View style={styles.info}>
           <Text style={styles.category}>{product.category.toUpperCase().replace("-", " ")}</Text>
           <Text style={styles.name}>{product.name}</Text>
+          {product.review_count && product.review_count > 0 ? (
+            <View style={styles.ratingRow} testID="rating-summary">
+              <View style={{ flexDirection: "row", gap: 2 }}>
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <Feather
+                    key={i}
+                    name="star"
+                    size={14}
+                    color={i <= Math.round(product.average_rating || 0) ? colors.brand : colors.border}
+                  />
+                ))}
+              </View>
+              <Text style={styles.ratingText}>{product.average_rating?.toFixed(1)} · {product.review_count} {product.review_count === 1 ? "review" : "reviews"}</Text>
+            </View>
+          ) : null}
           <Text style={styles.price}>₹{product.price.toLocaleString("en-IN")}</Text>
           <View style={styles.divider} />
           <Text style={styles.desc}>{product.description}</Text>
@@ -171,8 +215,91 @@ export default function ProductDetail() {
             <Feather name="bookmark" size={16} color={colors.brandDark} />
             <Text style={styles.nestBtnText}>Add to Nest Table</Text>
           </Pressable>
+
+          {/* Reviews */}
+          <View style={styles.reviewsSection}>
+            <View style={styles.reviewsHeader}>
+              <View>
+                <Text style={styles.reviewsEyebrow}>WHAT OTHERS SAY</Text>
+                <Text style={styles.reviewsTitle}>Reviews</Text>
+              </View>
+              <Pressable
+                style={styles.writeBtn}
+                onPress={() => user ? setReviewModalOpen(true) : router.push("/(auth)/login")}
+                testID="write-review-btn"
+              >
+                <Feather name="edit-2" size={14} color={colors.brandDark} />
+                <Text style={styles.writeText}>Write</Text>
+              </Pressable>
+            </View>
+            {reviews.length === 0 ? (
+              <Text style={styles.noReviews}>Be the first to review this piece.</Text>
+            ) : (
+              <View style={{ gap: spacing.lg, marginTop: spacing.md }}>
+                {reviews.map((r) => (
+                  <View key={r.id} style={styles.reviewCard} testID={`review-${r.id}`}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                      <View style={styles.reviewAvatar}><Text style={styles.reviewInitials}>{r.user_name.slice(0, 1).toUpperCase()}</Text></View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.reviewName}>{r.user_name}</Text>
+                        <View style={{ flexDirection: "row", gap: 2, marginTop: 2 }}>
+                          {[1, 2, 3, 4, 5].map((i) => (
+                            <Feather key={i} name="star" size={11} color={i <= r.rating ? colors.brand : colors.border} />
+                          ))}
+                        </View>
+                      </View>
+                    </View>
+                    {r.title ? <Text style={styles.reviewTitle}>{r.title}</Text> : null}
+                    {r.body ? <Text style={styles.reviewBody}>{r.body}</Text> : null}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
         </View>
       </ScrollView>
+
+      {/* Review modal */}
+      <Modal visible={reviewModalOpen} transparent animationType="slide" onRequestClose={() => setReviewModalOpen(false)}>
+        <View style={styles.modalBg}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHead}>
+              <Text style={styles.modalTitle}>Write a Review</Text>
+              <Pressable onPress={() => setReviewModalOpen(false)} testID="close-review-modal"><Feather name="x" size={22} color={colors.onSurface} /></Pressable>
+            </View>
+            <View style={{ gap: spacing.md }}>
+              <Text style={styles.rvLab}>YOUR RATING</Text>
+              <View style={styles.starRow}>
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <Pressable key={i} onPress={() => setRvForm({ ...rvForm, rating: i })} testID={`star-${i}`} hitSlop={8}>
+                    <Feather name="star" size={30} color={i <= rvForm.rating ? colors.brand : colors.border} />
+                  </Pressable>
+                ))}
+              </View>
+              <TextInput
+                testID="review-title-input"
+                placeholder="Give it a headline..."
+                placeholderTextColor={colors.mutedText}
+                style={styles.rvInput}
+                value={rvForm.title}
+                onChangeText={(v) => setRvForm({ ...rvForm, title: v })}
+              />
+              <TextInput
+                testID="review-body-input"
+                placeholder="Tell us what you love (or don't)..."
+                placeholderTextColor={colors.mutedText}
+                style={[styles.rvInput, { minHeight: 90, textAlignVertical: "top" }]}
+                multiline
+                value={rvForm.body}
+                onChangeText={(v) => setRvForm({ ...rvForm, body: v })}
+              />
+              <Pressable style={styles.submitReview} onPress={submitReview} disabled={rvBusy} testID="submit-review-btn">
+                {rvBusy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.submitReviewText}>Post Review</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={slModalOpen} transparent animationType="slide" onRequestClose={() => setSlModalOpen(false)}>
         <View style={styles.modalBg}>
@@ -269,6 +396,26 @@ const styles = StyleSheet.create({
   addBtnText: { color: colors.onBrandPrimary, fontFamily: "DMSansBold", letterSpacing: 1.5, textTransform: "uppercase", fontSize: 13 },
   nestBtn: { marginTop: spacing.xl, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, borderWidth: 1, borderColor: colors.brand, paddingVertical: spacing.md, borderRadius: radius.pill, backgroundColor: colors.brandLight },
   nestBtnText: { fontFamily: "DMSansBold", fontSize: 12, letterSpacing: 1.5, textTransform: "uppercase", color: colors.brandDark },
+  ratingRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs },
+  ratingText: { fontFamily: "DMSans", fontSize: 12, color: colors.onSurfaceSecondary },
+  reviewsSection: { marginTop: spacing.xxl, borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: spacing.xl },
+  reviewsHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
+  reviewsEyebrow: { fontFamily: "DMSansMedium", fontSize: 11, letterSpacing: 2, color: colors.mutedText },
+  reviewsTitle: { fontFamily: "CormorantGaramondBold", fontSize: 24, color: colors.onSurface, marginTop: 2 },
+  writeBtn: { flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.brandLight },
+  writeText: { fontFamily: "DMSansBold", fontSize: 11, letterSpacing: 1, color: colors.brandDark, textTransform: "uppercase" },
+  noReviews: { ...type.body, marginTop: spacing.md, fontStyle: "italic" },
+  reviewCard: { padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, gap: spacing.sm },
+  reviewAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.brandLight, alignItems: "center", justifyContent: "center" },
+  reviewInitials: { fontFamily: "DMSansBold", fontSize: 14, color: colors.brandDark },
+  reviewName: { fontFamily: "DMSansMedium", fontSize: 13, color: colors.onSurface },
+  reviewTitle: { fontFamily: "CormorantGaramondBold", fontSize: 16, color: colors.onSurface },
+  reviewBody: { fontFamily: "DMSans", fontSize: 13, color: colors.onSurfaceSecondary, lineHeight: 20 },
+  rvLab: { fontFamily: "DMSansMedium", fontSize: 11, letterSpacing: 2, color: colors.mutedText },
+  starRow: { flexDirection: "row", gap: spacing.sm },
+  rvInput: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, fontFamily: "DMSans", fontSize: 14, color: colors.onSurface },
+  submitReview: { backgroundColor: colors.brand, paddingVertical: spacing.md, borderRadius: radius.pill, alignItems: "center", marginTop: spacing.sm },
+  submitReviewText: { color: colors.onBrandPrimary, fontFamily: "DMSansBold", letterSpacing: 1.5, textTransform: "uppercase", fontSize: 13 },
   modalBg: { flex: 1, backgroundColor: "rgba(44,41,37,0.4)", justifyContent: "flex-end" },
   modalCard: { backgroundColor: colors.surface, padding: spacing.xl, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, paddingBottom: spacing.xxxl },
   modalHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg },

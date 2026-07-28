@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator, Modal,
+  View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator, Modal, Switch,
   Platform, KeyboardAvoidingView,
 } from "react-native";
 import { WebView } from "react-native-webview";
@@ -11,24 +11,45 @@ import * as Haptics from "expo-haptics";
 import { colors, radius, spacing, type } from "@/src/theme";
 import { useCart } from "@/src/context/CartContext";
 import { useAuth } from "@/src/context/AuthContext";
-import { api, BACKEND_URL } from "@/src/api/client";
+import { api } from "@/src/api/client";
 
 export default function Checkout() {
   const router = useRouter();
   const { user } = useAuth();
   const { items, subtotal, clear } = useCart();
   const shipping = subtotal > 2000 ? 0 : 99;
-  const total = subtotal + shipping;
 
   const [name, setName] = useState(user?.name || "");
   const [phone, setPhone] = useState(user?.mobile || "");
   const [address, setAddress] = useState("");
+  const [pointsBalance, setPointsBalance] = useState(0);
+  const [pointsRedeemValue, setPointsRedeemValue] = useState(0.1);
+  const [applyPoints, setApplyPoints] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<any>(null);
   const [mock, setMock] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [earnedPoints, setEarnedPoints] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const p = await api<{ balance: number; redeem_value: number }>("/points", { auth: true });
+        setPointsBalance(p.balance);
+        setPointsRedeemValue(p.redeem_value);
+      } catch {}
+    })();
+  }, [user]);
+
+  const gross = subtotal + shipping;
+  // Cap redemption at 30% of total
+  const maxRedeemPoints = Math.min(pointsBalance, Math.floor((gross * 0.3) / pointsRedeemValue));
+  const pointsToRedeem = applyPoints ? maxRedeemPoints : 0;
+  const discount = pointsToRedeem * pointsRedeemValue;
+  const total = Math.max(0, gross - discount);
 
   const startPayment = async () => {
     setErr(null);
@@ -44,6 +65,7 @@ export default function Checkout() {
           shipping_address: address,
           shipping_name: name,
           shipping_phone: phone,
+          points_to_redeem: pointsToRedeem,
         },
       });
       setActiveOrder(r.order);
@@ -62,7 +84,8 @@ export default function Checkout() {
     if (!activeOrder) return;
     setBusy(true);
     try {
-      await api(`/orders/${activeOrder.id}/mock-pay`, { method: "POST", auth: true });
+      const r = await api<{ points_earned: number }>(`/orders/${activeOrder.id}/mock-pay`, { method: "POST", auth: true });
+      setEarnedPoints(r.points_earned || 0);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       clear();
       setSuccess(true);
@@ -82,6 +105,12 @@ export default function Checkout() {
           </View>
           <Text style={styles.successTitle}>Order Placed</Text>
           <Text style={styles.successText}>Thank you for choosing Garlic. Your order is on its way to your nest.</Text>
+          {earnedPoints > 0 && (
+            <View style={styles.earnedBox} testID="earned-points-box">
+              <Feather name="award" size={16} color={colors.brandDark} />
+              <Text style={styles.earnedText}>+{earnedPoints} Nest Points earned</Text>
+            </View>
+          )}
           <Pressable testID="view-orders-btn" style={styles.primary} onPress={() => { router.replace("/orders"); }}>
             <Text style={styles.primaryText}>View My Orders</Text>
           </Pressable>
@@ -122,9 +151,30 @@ export default function Checkout() {
           <View style={styles.totalBox}>
             <Row label="Subtotal" value={`₹${subtotal.toLocaleString("en-IN")}`} />
             <Row label="Shipping" value={shipping === 0 ? "Free" : `₹${shipping}`} />
+            {pointsToRedeem > 0 && (
+              <Row label={`Nest Points (-${pointsToRedeem} pts)`} value={`-₹${discount.toLocaleString("en-IN")}`} />
+            )}
             <View style={styles.dividerLine} />
             <Row label="Total" value={`₹${total.toLocaleString("en-IN")}`} big />
           </View>
+
+          {pointsBalance > 0 && (
+            <View style={styles.pointsToggleBox} testID="points-toggle-box">
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pointsToggleTitle}>Use Nest Points</Text>
+                <Text style={styles.pointsToggleSub}>
+                  You have {pointsBalance.toLocaleString("en-IN")} pts. {maxRedeemPoints > 0 ? `Apply ${maxRedeemPoints} pts (₹${discount.toLocaleString("en-IN")}) on this order.` : `Add more items to unlock redemption.`}
+                </Text>
+              </View>
+              <Switch
+                testID="apply-points-switch"
+                value={applyPoints}
+                onValueChange={setApplyPoints}
+                disabled={maxRedeemPoints === 0}
+                trackColor={{ true: colors.brand, false: colors.border }}
+              />
+            </View>
+          )}
 
           {err && <Text style={styles.err} testID="checkout-error">{err}</Text>}
         </ScrollView>
@@ -218,6 +268,11 @@ const styles = StyleSheet.create({
   totalBox: { marginTop: spacing.sm, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg },
   dividerLine: { height: 1, backgroundColor: colors.divider, marginVertical: spacing.sm },
   err: { fontFamily: "DMSans", color: colors.error, backgroundColor: "#F9EDEC", padding: spacing.md, borderRadius: radius.lg },
+  pointsToggleBox: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.lg, backgroundColor: colors.brandLight, borderRadius: radius.md, marginTop: spacing.sm },
+  pointsToggleTitle: { fontFamily: "DMSansBold", fontSize: 14, color: colors.brandDark },
+  pointsToggleSub: { fontFamily: "DMSans", fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 2, lineHeight: 16 },
+  earnedBox: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.brandLight, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.pill, marginTop: spacing.sm },
+  earnedText: { fontFamily: "DMSansBold", fontSize: 13, color: colors.brandDark, letterSpacing: 0.5 },
   footer: {
     padding: spacing.xl,
     borderTopWidth: 1, borderTopColor: colors.border,

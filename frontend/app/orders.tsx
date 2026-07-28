@@ -57,7 +57,12 @@ export default function Orders() {
       ) : (
         <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.xl, paddingBottom: spacing.xxxl }}>
           {orders.map((o) => (
-            <View key={o.id} style={styles.card} testID={`order-${o.id}`}>
+            <Pressable
+              key={o.id}
+              style={styles.card}
+              testID={`order-${o.id}`}
+              onPress={() => router.push(`/order/${o.id}`)}
+            >
               <View style={styles.orderTop}>
                 <View>
                   <Text style={styles.metaSm}>ORDER #{o.id.slice(0, 8).toUpperCase()}</Text>
@@ -84,7 +89,7 @@ export default function Orders() {
                 <Text style={styles.totalLabel}>Total</Text>
                 <Text style={styles.totalVal}>₹{o.amount.toLocaleString("en-IN")}</Text>
               </View>
-            </View>
+            </Pressable>
           ))}
         </ScrollView>
       )}

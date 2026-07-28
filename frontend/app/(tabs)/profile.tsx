@@ -1,14 +1,26 @@
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { colors, radius, spacing, type } from "@/src/theme";
 import { useAuth } from "@/src/context/AuthContext";
+import { api } from "@/src/api/client";
 
 export default function Profile() {
   const router = useRouter();
   const { user, logout } = useAuth();
+  const [points, setPoints] = useState<number | null>(null);
+
+  const loadPoints = useCallback(async () => {
+    if (!user) return;
+    try {
+      const p = await api<{ balance: number }>("/points", { auth: true });
+      setPoints(p.balance);
+    } catch {}
+  }, [user]);
+
+  useFocusEffect(useCallback(() => { loadPoints(); }, [loadPoints]));
 
   if (!user) {
     return (
@@ -52,6 +64,17 @@ export default function Profile() {
           <Text style={styles.subtle}>+91 {user.mobile}</Text>
         </View>
 
+        <Pressable style={styles.pointsCard} onPress={() => router.push("/points")} testID="points-card">
+          <View style={{ flex: 1 }}>
+            <Text style={styles.pointsEyebrow}>NEST REWARDS</Text>
+            <Text style={styles.pointsBalance}>
+              {points !== null ? `${points.toLocaleString("en-IN")} pts` : "—"}
+            </Text>
+            <Text style={styles.pointsMeta}>Tap to view rewards & activity</Text>
+          </View>
+          <Feather name="chevron-right" size={22} color={colors.onBrandPrimary} />
+        </Pressable>
+
         <View style={styles.section}>
           <Row icon="shopping-bag" label="My Orders" testID="profile-orders" onPress={() => router.push("/orders")} />
           <Row icon="bookmark" label="My Nest Tables" testID="profile-shortlists" onPress={() => router.push("/shortlists")} />
@@ -78,6 +101,10 @@ const styles = StyleSheet.create({
   title: { ...type.displayLG, marginTop: spacing.xs, marginBottom: spacing.sm },
   subtle: { fontFamily: "DMSans", color: colors.onSurfaceSecondary, fontSize: 14, marginTop: 2 },
   section: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.divider },
+  pointsCard: { marginHorizontal: spacing.xl, marginBottom: spacing.lg, backgroundColor: colors.brand, borderRadius: radius.md, padding: spacing.lg, flexDirection: "row", alignItems: "center", gap: spacing.md },
+  pointsEyebrow: { fontFamily: "DMSansMedium", fontSize: 10, letterSpacing: 2, color: "rgba(252,251,248,0.75)" },
+  pointsBalance: { fontFamily: "CormorantGaramondBold", fontSize: 26, color: colors.onBrandPrimary, marginTop: 2 },
+  pointsMeta: { fontFamily: "DMSans", fontSize: 11, color: "rgba(252,251,248,0.75)", marginTop: 2 },
   row: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
     paddingVertical: spacing.lg, paddingHorizontal: spacing.xl,

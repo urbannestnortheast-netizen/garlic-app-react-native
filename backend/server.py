@@ -136,6 +136,7 @@ class CreateOrderIn(BaseModel):
     shipping_address: str
     shipping_name: str
     shipping_phone: str
+    points_to_redeem: int = 0
 
 
 class OrderStatusIn(BaseModel):
@@ -153,10 +154,20 @@ class ShortlistItemIn(BaseModel):
     product_id: str
 
 
+class ReviewIn(BaseModel):
+    rating: int  # 1-5
+    title: str = ""
+    body: str = ""
+
+
+class RedeemPointsIn(BaseModel):
+    points: int = 0
+
+
 class EditorialTile(BaseModel):
     label: str
     image: str
-    filter: dict  # {category|subcategory|collection}
+    filter: dict
 
 
 class EditorialSectionIn(BaseModel):
@@ -168,6 +179,9 @@ class EditorialSectionIn(BaseModel):
 
 
 ALLOWED_STATUSES = {"created", "paid", "shipped", "delivered", "cancelled"}
+POINTS_RATE_PER_RUPEE = 0.1   # 10 points per ₹100 spent (approx 2% back since 1pt = ₹0.10 redeem)
+POINTS_REDEEM_VALUE = 0.10    # 1 point = ₹0.10
+REFERRAL_BONUS_POINTS = 500   # ₹50 for the shortlist owner when a friend marks gifted
 
 
 # ---------- Taxonomy
@@ -498,7 +512,8 @@ async def get_product(product_id: str):
     item = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not item:
         raise HTTPException(404, "Product not found")
-    return item
+    summary = await _get_review_summary(product_id)
+    return {**item, **summary}
 
 
 @api_router.post("/products")
@@ -553,6 +568,99 @@ async def admin_update_editorial(editorial_id: str, data: EditorialSectionIn, ad
     if not updated:
         raise HTTPException(404, "Editorial not found")
     return updated
+
+
+# ---------- Reviews
+async def _get_review_summary(product_id: str) -> dict:
+    reviews = await db.reviews.find({"product_id": product_id}, {"_id": 0, "rating": 1}).to_list(500)
+    if not reviews:
+        return {"average_rating": 0.0, "review_count": 0}
+    total = sum(r["rating"] for r in reviews)
+    return {"average_rating": round(total / len(reviews), 1), "review_count": len(reviews)}
+
+
+@api_router.get("/products/{product_id}/reviews")
+async def list_reviews(product_id: str):
+    reviews = await db.reviews.find({"product_id": product_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return reviews
+
+
+@api_router.post("/products/{product_id}/reviews")
+async def create_review(product_id: str, data: ReviewIn, user: dict = Depends(get_current_user)):
+    if not (1 <= data.rating <= 5):
+        raise HTTPException(400, "Rating must be 1-5")
+    if not await db.products.find_one({"id": product_id}):
+        raise HTTPException(404, "Product not found")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "product_id": product_id,
+        "user_id": user["id"],
+        "user_name": user["name"],
+        "rating": data.rating,
+        "title": data.title.strip(),
+        "body": data.body.strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Upsert: one review per user per product
+    await db.reviews.update_one(
+        {"product_id": product_id, "user_id": user["id"]},
+        {"$set": doc},
+        upsert=True,
+    )
+    return doc
+
+
+# ---------- Points ("Nest Rewards")
+async def _get_user_points_balance(user_id: str) -> int:
+    doc = await db.user_points.find_one({"user_id": user_id}, {"_id": 0})
+    return int(doc["balance"]) if doc else 0
+
+
+async def _award_points(user_id: str, points: int, reason: str, meta: dict) -> int:
+    if points <= 0:
+        return await _get_user_points_balance(user_id)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    tx = {
+        "id": str(uuid.uuid4()), "type": "earn", "amount": points,
+        "reason": reason, "meta": meta, "created_at": now_iso,
+    }
+    await db.user_points.update_one(
+        {"user_id": user_id},
+        {"$inc": {"balance": points}, "$push": {"transactions": tx}, "$setOnInsert": {"created_at": now_iso}},
+        upsert=True,
+    )
+    return await _get_user_points_balance(user_id)
+
+
+async def _spend_points(user_id: str, points: int, reason: str, meta: dict) -> int:
+    if points <= 0:
+        return await _get_user_points_balance(user_id)
+    bal = await _get_user_points_balance(user_id)
+    if points > bal:
+        raise HTTPException(400, "Not enough Nest Points")
+    tx = {
+        "id": str(uuid.uuid4()), "type": "spend", "amount": points,
+        "reason": reason, "meta": meta, "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.user_points.update_one(
+        {"user_id": user_id},
+        {"$inc": {"balance": -points}, "$push": {"transactions": tx}},
+    )
+    return await _get_user_points_balance(user_id)
+
+
+@api_router.get("/points")
+async def get_points(user: dict = Depends(get_current_user)):
+    doc = await db.user_points.find_one({"user_id": user["id"]}, {"_id": 0})
+    balance = int(doc["balance"]) if doc else 0
+    txs = list(reversed(doc.get("transactions", []))) if doc else []
+    return {
+        "balance": balance,
+        "value_rupees": round(balance * POINTS_REDEEM_VALUE, 2),
+        "rate_per_rupee": POINTS_RATE_PER_RUPEE,
+        "redeem_value": POINTS_REDEEM_VALUE,
+        "transactions": txs[:50],
+    }
 
 
 # ---------- Wishlist
@@ -711,10 +819,17 @@ async def mark_bought(share_slug: str, data: ShortlistItemIn):
         raise HTTPException(404, "Shortlist not found")
     if data.product_id not in sl.get("items", []):
         raise HTTPException(400, "Product not in shortlist")
+    already_bought = data.product_id in sl.get("bought", [])
     await db.shortlists.update_one(
         {"share_slug": share_slug},
         {"$addToSet": {"bought": data.product_id}},
     )
+    # First-time gift on this item → award referral bonus to the shortlist owner
+    if not already_bought:
+        await _award_points(
+            sl["user_id"], REFERRAL_BONUS_POINTS,
+            "referral_gift", {"share_slug": share_slug, "product_id": data.product_id},
+        )
     updated = await db.shortlists.find_one({"share_slug": share_slug}, {"_id": 0, "user_id": 0})
     return await _hydrate_shortlist(updated)
 
@@ -737,11 +852,24 @@ async def create_order(data: CreateOrderIn, user: dict = Depends(get_current_use
             "image": (product.get("images") or [""])[0],
             "price": product["price"], "quantity": it.quantity, "line_total": line_total,
         })
-    amount_paise = int(round(total * 100))
+
+    # Apply redemption
+    points_to_redeem = max(0, int(data.points_to_redeem or 0))
+    if points_to_redeem > 0:
+        bal = await _get_user_points_balance(user["id"])
+        if points_to_redeem > bal:
+            raise HTTPException(400, "Not enough Nest Points")
+        # Cap redemption at 30% of order total
+        max_redeemable_rupees = total * 0.3
+        max_redeemable_points = int(max_redeemable_rupees / POINTS_REDEEM_VALUE)
+        points_to_redeem = min(points_to_redeem, max_redeemable_points)
+    discount = round(points_to_redeem * POINTS_REDEEM_VALUE, 2)
+    payable = max(0.0, total - discount)
+    amount_paise = int(round(payable * 100))
 
     razorpay_order_id = None
     mock = False
-    if razor_client:
+    if razor_client and amount_paise > 0:
         try:
             ro = razor_client.order.create({
                 "amount": amount_paise, "currency": "INR",
@@ -758,12 +886,23 @@ async def create_order(data: CreateOrderIn, user: dict = Depends(get_current_use
     order_doc = {
         "id": order_id, "user_id": user["id"], "items": line_items,
         "shipping_address": data.shipping_address, "shipping_name": data.shipping_name,
-        "shipping_phone": data.shipping_phone, "amount": total, "amount_paise": amount_paise,
+        "shipping_phone": data.shipping_phone,
+        "subtotal": total,
+        "points_redeemed": points_to_redeem,
+        "discount": discount,
+        "amount": payable, "amount_paise": amount_paise,
         "currency": "INR", "razorpay_order_id": razorpay_order_id, "status": "created",
-        "mock_payment": mock, "created_at": datetime.now(timezone.utc).isoformat(),
+        "mock_payment": mock,
+        "history": [{"status": "created", "at": datetime.now(timezone.utc).isoformat()}],
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.orders.insert_one(order_doc)
     order_doc.pop("_id", None)
+
+    # Reserve/spend redeemed points now (will be rolled back on cancellation later if needed)
+    if points_to_redeem > 0:
+        await _spend_points(user["id"], points_to_redeem, "order_redemption", {"order_id": order_id})
+
     return {
         "order": order_doc,
         "key_id": RAZORPAY_KEY_ID or "",
@@ -791,8 +930,21 @@ async def mock_pay(order_id: str, user: dict = Depends(get_current_user)):
     order = await db.orders.find_one({"id": order_id, "user_id": user["id"]})
     if not order:
         raise HTTPException(404, "Order not found")
-    await db.orders.update_one({"id": order_id}, {"$set": {"status": "paid", "payment_id": f"mock_{uuid.uuid4().hex[:12]}", "paid_at": datetime.now(timezone.utc).isoformat()}})
-    return {"ok": True, "status": "paid"}
+    if order.get("status") == "paid":
+        return {"ok": True, "status": "paid"}
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.orders.update_one(
+        {"id": order_id},
+        {
+            "$set": {"status": "paid", "payment_id": f"mock_{uuid.uuid4().hex[:12]}", "paid_at": now_iso},
+            "$push": {"history": {"status": "paid", "at": now_iso}},
+        },
+    )
+    # Award points on paid amount (net of discount)
+    earn = int(round(float(order.get("amount", 0)) * POINTS_RATE_PER_RUPEE))
+    if earn > 0:
+        await _award_points(user["id"], earn, "order_earn", {"order_id": order_id})
+    return {"ok": True, "status": "paid", "points_earned": earn}
 
 
 @api_router.get("/admin/orders")
@@ -805,9 +957,13 @@ async def admin_list_orders(admin: dict = Depends(require_admin)):
 async def admin_update_status(order_id: str, data: OrderStatusIn, admin: dict = Depends(require_admin)):
     if data.status not in ALLOWED_STATUSES:
         raise HTTPException(400, f"Invalid status")
+    now_iso = datetime.now(timezone.utc).isoformat()
     updated = await db.orders.find_one_and_update(
         {"id": order_id},
-        {"$set": {"status": data.status, "status_updated_at": datetime.now(timezone.utc).isoformat()}},
+        {
+            "$set": {"status": data.status, "status_updated_at": now_iso},
+            "$push": {"history": {"status": data.status, "at": now_iso}},
+        },
         return_document=True, projection={"_id": 0},
     )
     if not updated:
