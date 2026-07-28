@@ -580,6 +580,18 @@ def _make_slug(name: str) -> str:
     return f"{base}-{uuid.uuid4().hex[:6]}"
 
 
+async def _insert_shortlist_with_unique_slug(doc: dict, max_attempts: int = 5) -> dict:
+    from pymongo.errors import DuplicateKeyError
+    name_base = doc["name"]
+    for _ in range(max_attempts):
+        try:
+            await db.shortlists.insert_one(doc)
+            return doc
+        except DuplicateKeyError:
+            doc["share_slug"] = _make_slug(name_base)
+    raise HTTPException(500, "Could not allocate a unique share link, please retry.")
+
+
 async def _hydrate_shortlist(sl: dict) -> dict:
     ids = sl.get("items", [])
     products = []
@@ -618,7 +630,7 @@ async def create_shortlist(data: ShortlistIn, user: dict = Depends(get_current_u
         "bought": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.shortlists.insert_one(doc)
+    await _insert_shortlist_with_unique_slug(doc)
     doc.pop("_id", None)
     return await _hydrate_shortlist(doc)
 
@@ -851,6 +863,12 @@ app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], 
 # ---------- Startup Seed
 @app.on_event("startup")
 async def seed_data():
+    # Ensure unique index on shortlists.share_slug
+    try:
+        await db.shortlists.create_index("share_slug", unique=True)
+    except Exception as e:
+        logger.warning(f"Index create warning: {e}")
+
     # Admin
     if not await db.users.find_one({"email": ADMIN_EMAIL}):
         await db.users.insert_one({
