@@ -14,18 +14,22 @@ A minimalist, aesthetic pastel shopping experience for home essentials, crockery
   - Editorial sections (Free From Boring Dinners, Free From A Messy Kitchen, The Quiet Home) with 4-tile grids
   - Curated Collections carousel (Modern Minimalist, Banjara, Wellness, Nautical, Jungle)
   - Best Sellers grid with strike-through original prices for sale items
-- **Category detail** with sticky subcategory chips (e.g. Dining → Cups, Bowls, Plates, Platters, Glassware, Dinner Sets, Table Linen)
+- **Category detail** with sticky subcategory chips
 - **Collection detail** with hero + grid
 - **Gifts hub** with By Person / By Occasion toggle + pastel filter chips
-- **Product detail** with image gallery, sticky Add-to-Cart, wishlist toggle
-- **Cart**: quantity control, remove, live subtotal + shipping
-- **Checkout**: shipping form + Razorpay hosted checkout (WebView) with automatic mock fallback when keys are missing
-- **Orders**: user history with status badges (Pending / Confirmed / Shipped / Delivered / Cancelled)
+- **Product detail** with image gallery, sticky Add-to-Cart, wishlist toggle, **"Add to Nest Table" button** (choose which shortlist to add to)
+- **The Nest Table (Gift Registry)**: NEW
+  - Create named shortlists with occasion + personal message
+  - Auto-generated shareable URL (`/api/shortlists/share/{slug}` public endpoint)
+  - Public share view shows owner name + all products; friends can mark items as "Gifted" so others don't buy twice
+  - No user_id leaked in public payloads
+- **Cart** + **Checkout** (Razorpay hosted checkout via WebView, mock fallback)
+- **Orders** history with status badges
 - **Wishlist**: authenticated favorites synced to backend
-- **Admin panel**:
-  - Products CRUD with full schema (category, subcategory, price, original_price, collection, gift_persons[], gift_occasions[], images, material, dimensions, stock, featured)
-  - Orders view + status management (created → paid → shipped → delivered → cancelled)
-  - Editorial sections editable via API (admin/editorials endpoints)
+- **Admin panel** tabs:
+  - Products CRUD (full schema)
+  - Orders view + status management
+  - **Editorials inline editor**: edit title, subtitle, order, active toggle, add/remove tiles (label + image URL + subcategory filter)
 
 ## Design System
 - **Palette**: Sage green brand `#4A5F45` (from logo) + Peach/coral accent `#F5CBB6` + oat/cream neutrals
