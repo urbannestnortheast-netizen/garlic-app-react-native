@@ -142,10 +142,27 @@ class OrderStatusIn(BaseModel):
     status: str
 
 
+class ShortlistIn(BaseModel):
+    name: str
+    occasion: str = ""
+    message: str = ""
+    cover_image: str = ""
+
+
+class ShortlistItemIn(BaseModel):
+    product_id: str
+
+
+class EditorialTile(BaseModel):
+    label: str
+    image: str
+    filter: dict  # {category|subcategory|collection}
+
+
 class EditorialSectionIn(BaseModel):
     title: str
     subtitle: str = ""
-    tiles: List[dict]  # [{label, image, filter: {category|subcategory|collection}}]
+    tiles: List[dict]
     order: int = 0
     active: bool = True
 
@@ -555,6 +572,139 @@ async def toggle_wishlist(data: WishlistToggleIn, user: dict = Depends(get_curre
         return {"in_wishlist": False}
     await db.wishlist.insert_one({"user_id": user["id"], "product_id": data.product_id, "created_at": datetime.now(timezone.utc).isoformat()})
     return {"in_wishlist": True}
+
+
+# ---------- Shortlist ("Nest Table") — shareable gift registry
+def _make_slug(name: str) -> str:
+    base = "".join(c.lower() if c.isalnum() else "-" for c in name).strip("-")[:24] or "nest"
+    return f"{base}-{uuid.uuid4().hex[:6]}"
+
+
+async def _hydrate_shortlist(sl: dict) -> dict:
+    ids = sl.get("items", [])
+    products = []
+    if ids:
+        products = await db.products.find({"id": {"$in": ids}}, {"_id": 0}).to_list(500)
+    bought = set(sl.get("bought", []))
+    return {
+        **sl,
+        "products": [{**p, "bought": p["id"] in bought} for p in products],
+        "count": len(products),
+    }
+
+
+@api_router.get("/shortlists")
+async def list_shortlists(user: dict = Depends(get_current_user)):
+    items = await db.shortlists.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    out = []
+    for sl in items:
+        out.append(await _hydrate_shortlist(sl))
+    return out
+
+
+@api_router.post("/shortlists")
+async def create_shortlist(data: ShortlistIn, user: dict = Depends(get_current_user)):
+    slug = _make_slug(data.name)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "owner_name": user["name"],
+        "name": data.name.strip(),
+        "occasion": data.occasion,
+        "message": data.message,
+        "cover_image": data.cover_image,
+        "share_slug": slug,
+        "items": [],
+        "bought": [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.shortlists.insert_one(doc)
+    doc.pop("_id", None)
+    return await _hydrate_shortlist(doc)
+
+
+@api_router.get("/shortlists/{shortlist_id}")
+async def get_shortlist(shortlist_id: str, user: dict = Depends(get_current_user)):
+    sl = await db.shortlists.find_one({"id": shortlist_id, "user_id": user["id"]}, {"_id": 0})
+    if not sl:
+        raise HTTPException(404, "Shortlist not found")
+    return await _hydrate_shortlist(sl)
+
+
+@api_router.put("/shortlists/{shortlist_id}")
+async def update_shortlist(shortlist_id: str, data: ShortlistIn, user: dict = Depends(get_current_user)):
+    updated = await db.shortlists.find_one_and_update(
+        {"id": shortlist_id, "user_id": user["id"]},
+        {"$set": {
+            "name": data.name.strip(),
+            "occasion": data.occasion,
+            "message": data.message,
+            "cover_image": data.cover_image,
+        }},
+        return_document=True, projection={"_id": 0},
+    )
+    if not updated:
+        raise HTTPException(404, "Shortlist not found")
+    return await _hydrate_shortlist(updated)
+
+
+@api_router.delete("/shortlists/{shortlist_id}")
+async def delete_shortlist(shortlist_id: str, user: dict = Depends(get_current_user)):
+    res = await db.shortlists.delete_one({"id": shortlist_id, "user_id": user["id"]})
+    if not res.deleted_count:
+        raise HTTPException(404, "Shortlist not found")
+    return {"ok": True}
+
+
+@api_router.post("/shortlists/{shortlist_id}/items")
+async def add_shortlist_item(shortlist_id: str, data: ShortlistItemIn, user: dict = Depends(get_current_user)):
+    sl = await db.shortlists.find_one({"id": shortlist_id, "user_id": user["id"]})
+    if not sl:
+        raise HTTPException(404, "Shortlist not found")
+    if not await db.products.find_one({"id": data.product_id}):
+        raise HTTPException(400, "Product not found")
+    await db.shortlists.update_one(
+        {"id": shortlist_id},
+        {"$addToSet": {"items": data.product_id}},
+    )
+    updated = await db.shortlists.find_one({"id": shortlist_id}, {"_id": 0})
+    return await _hydrate_shortlist(updated)
+
+
+@api_router.delete("/shortlists/{shortlist_id}/items/{product_id}")
+async def remove_shortlist_item(shortlist_id: str, product_id: str, user: dict = Depends(get_current_user)):
+    sl = await db.shortlists.find_one({"id": shortlist_id, "user_id": user["id"]})
+    if not sl:
+        raise HTTPException(404, "Shortlist not found")
+    await db.shortlists.update_one(
+        {"id": shortlist_id},
+        {"$pull": {"items": product_id, "bought": product_id}},
+    )
+    updated = await db.shortlists.find_one({"id": shortlist_id}, {"_id": 0})
+    return await _hydrate_shortlist(updated)
+
+
+@api_router.get("/shortlists/share/{share_slug}")
+async def public_shortlist(share_slug: str):
+    sl = await db.shortlists.find_one({"share_slug": share_slug}, {"_id": 0, "user_id": 0})
+    if not sl:
+        raise HTTPException(404, "Shortlist not found")
+    return await _hydrate_shortlist(sl)
+
+
+@api_router.post("/shortlists/share/{share_slug}/mark-bought")
+async def mark_bought(share_slug: str, data: ShortlistItemIn):
+    sl = await db.shortlists.find_one({"share_slug": share_slug})
+    if not sl:
+        raise HTTPException(404, "Shortlist not found")
+    if data.product_id not in sl.get("items", []):
+        raise HTTPException(400, "Product not in shortlist")
+    await db.shortlists.update_one(
+        {"share_slug": share_slug},
+        {"$addToSet": {"bought": data.product_id}},
+    )
+    updated = await db.shortlists.find_one({"share_slug": share_slug}, {"_id": 0, "user_id": 0})
+    return await _hydrate_shortlist(updated)
 
 
 # ---------- Orders

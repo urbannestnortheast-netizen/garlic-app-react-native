@@ -181,6 +181,13 @@ export default function Admin() {
         >
           <Text style={styles.tabText}>Orders</Text>
         </Pressable>
+        <Pressable
+          testID="admin-view-editorials-btn"
+          style={styles.tabPill}
+          onPress={() => router.push("/admin-editorials")}
+        >
+          <Text style={styles.tabText}>Editorials</Text>
+        </Pressable>
       </View>
 
       <Text style={styles.eyebrow}>{products.length} PRODUCTS</Text>
@@ -330,6 +337,11 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.xl, paddingBottom: spacing.md },
   title: { fontFamily: "CormorantGaramondBold", fontSize: 24, color: colors.onSurface },
   eyebrow: { fontFamily: "DMSansMedium", fontSize: 11, letterSpacing: 2, color: colors.mutedText, paddingHorizontal: spacing.xl },
+  tabsRow: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.xl, paddingVertical: spacing.md },
+  tabPill: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary },
+  tabActive: { backgroundColor: colors.brand },
+  tabText: { fontFamily: "DMSansMedium", fontSize: 12, color: colors.onSurface },
+  tabTextActive: { fontFamily: "DMSansBold", fontSize: 12, color: colors.onBrandPrimary },
   row: { flexDirection: "row", gap: spacing.md, alignItems: "center", padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg },
   thumb: { width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary },
   rowName: { fontFamily: "CormorantGaramond", fontSize: 16, color: colors.onSurface, lineHeight: 20 },

@@ -1,0 +1,38 @@
+{
+  "summary": "Backend regression + full 'Nest Table' shortlist feature verification for Garlic by Urban Nest (iteration 3). Created /app/backend/tests/test_shortlist.py with 30 tests: existing endpoints regression (root, categories, products, auth signup+login+me, wishlist toggle, orders create/list/mock-pay), shortlist auth-gating (401 without token), full shortlist CRUD (create with auto share_slug of form 'name-XXXXXX', hydrated {products,count} shape, list scoped per user, get/update/delete 404 for other user or nonexistent), item add/remove (idempotent $addToSet, 400 for unknown product, DELETE removes from items AND bought), public share endpoints WITHOUT auth (GET /shortlists/share/{slug} returns owner_name+occasion+products+count, does NOT leak user_id; 404 for bad slug; POST mark-bought works for items in list, 400 for items not in list, 404 for bad slug), verified bought=true reflects in subsequent public GET, and admin editorials PUT regression (updates title/subtitle/tiles/order/active, 404 for missing). All payloads recursively asserted to be free of MongoDB _id and user_id leaks in public paths. Result: 30/30 passed in 3.76s. All review-request items verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_shortlist.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 889 lines — exceeds the 700-line split threshold. Recommend splitting into routers/ (auth, products, taxonomy, editorials, shortlists, orders, payments).",
+    "Startup still does destructive `db.products.delete_many({})` + `db.editorials.delete_many({})` on every restart (server.py:864, 881). Shortlists survive, but any admin-created product mutations are wiped on `supervisorctl restart backend`. Consider a one-time migration/version flag.",
+    "Deprecated `@app.on_event('startup'/'shutdown')` still used (server.py:852, 887) — migrate to FastAPI `lifespan` context manager.",
+    "share_slug uniqueness is not enforced at the DB layer — _make_slug uses a 6-hex random suffix (16M space) but no unique index on shortlists.share_slug and no retry-on-collision. Recommend `db.shortlists.create_index('share_slug', unique=True)` at startup and retry on DuplicateKeyError.",
+    "PUT /api/shortlists/{id} accepts empty-string cover_image and blanks it silently even if caller didn't intend to update it. Consider using a separate patch model with Optional fields, or an explicit ShortlistPatchIn schema.",
+    "No pagination on GET /api/shortlists (currently caps at 50 via .to_list(50)); acceptable for MVP but flag for scale."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_shortlist.py"
+  ],
+  "success_rate": {
+    "backend": "100% (30/30)",
+    "frontend": "N/A (backend-only per review request)"
+  },
+  "seed_data_creation": "Tests self-create 2 disposable test users (TEST_User_* @garlicnest.com) per pytest module run and 1 shortlist (deleted at end of TestShortlistDelete). Editorial mutation test restores the original editorial content on teardown. No production/seed data is left mutated. Test users are NOT deleted (no admin delete-user endpoint exists) — recommend main agent add one if cleanup is needed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Nest Table shortlist backend feature is fully green. Endpoints verified: GET/POST/PUT/DELETE /api/shortlists[/{id}], POST/DELETE /api/shortlists/{id}/items[/{pid}], public GET /api/shortlists/share/{slug}, public POST /api/shortlists/share/{slug}/mark-bought. Public endpoints require NO auth and explicitly project out user_id (server.py:689, 706). Slug format: <slugified-name>-<6-hex>. Reseed-on-restart behaviour: products + editorials wiped on every backend restart; shortlists collection is preserved. Admin: admin@garlic.app / Admin@123. Razorpay MOCKED (keys empty) — orders/create returns mock=true and mock-pay endpoint sets status=paid. Use EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env for external testing (loaded via python-dotenv in the test file).",
+  "rca_of_issue": "N/A — no bugs found. All 30 tests passed on first non-setup run. Only test-authoring issues encountered: (1) needed to load EXPO_PUBLIC_BACKEND_URL from frontend/.env via python-dotenv since it isn't exported to the pytest env, and (2) had to use @garlicnest.com instead of @nest.test because pydantic EmailStr rejects .test as a reserved TLD."
+}

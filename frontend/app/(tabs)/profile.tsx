@@ -54,6 +54,7 @@ export default function Profile() {
 
         <View style={styles.section}>
           <Row icon="shopping-bag" label="My Orders" testID="profile-orders" onPress={() => router.push("/orders")} />
+          <Row icon="bookmark" label="My Nest Tables" testID="profile-shortlists" onPress={() => router.push("/shortlists")} />
           <Row icon="heart" label="Wishlist" testID="profile-wishlist" onPress={() => router.push("/(tabs)/wishlist")} />
           <Row icon="gift" label="Gifting" testID="profile-gifts" onPress={() => router.push("/gifts")} />
           <Row icon="grid" label="Collections" testID="profile-collections" onPress={() => router.push("/collections")} />
