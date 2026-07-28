@@ -156,9 +156,10 @@ class ShortlistItemIn(BaseModel):
 
 
 class ReviewIn(BaseModel):
-    rating: int  # 1-5
+    rating: int
     title: str = ""
     body: str = ""
+    photos: List[str] = []  # base64 or data URLs, max 3
 
 
 class RedeemPointsIn(BaseModel):
@@ -189,9 +190,21 @@ class EditorialSectionIn(BaseModel):
 
 
 ALLOWED_STATUSES = {"created", "paid", "shipped", "delivered", "cancelled"}
-POINTS_RATE_PER_RUPEE = 0.1   # 10 points per ₹100 spent (approx 2% back since 1pt = ₹0.10 redeem)
-POINTS_REDEEM_VALUE = 0.10    # 1 point = ₹0.10
-REFERRAL_BONUS_POINTS = 500   # ₹50 for the shortlist owner when a friend marks gifted
+
+# Valid state transitions
+STATUS_TRANSITIONS: dict = {
+    "created": {"paid", "cancelled"},
+    "paid": {"shipped", "cancelled"},
+    "shipped": {"delivered", "cancelled"},
+    "delivered": set(),
+    "cancelled": set(),
+}
+
+POINTS_RATE_PER_RUPEE = 0.1
+POINTS_REDEEM_VALUE = 0.10
+REFERRAL_BONUS_POINTS = 500
+PHOTO_REVIEW_BONUS_POINTS = 100
+MAX_REVIEW_PHOTOS = 3
 
 
 # ---------- Taxonomy
@@ -559,6 +572,7 @@ async def get_product(product_id: str):
 async def create_product(data: ProductIn, admin: dict = Depends(require_admin)):
     doc = data.model_dump()
     doc["id"] = str(uuid.uuid4())
+    doc["admin_edited"] = True
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
     await db.products.insert_one(doc)
     doc.pop("_id", None)
@@ -567,8 +581,10 @@ async def create_product(data: ProductIn, admin: dict = Depends(require_admin)):
 
 @api_router.put("/products/{product_id}")
 async def update_product(product_id: str, data: ProductIn, admin: dict = Depends(require_admin)):
+    payload = data.model_dump()
+    payload["admin_edited"] = True
     updated = await db.products.find_one_and_update(
-        {"id": product_id}, {"$set": data.model_dump()},
+        {"id": product_id}, {"$set": payload},
         return_document=True, projection={"_id": 0},
     )
     if not updated:
@@ -628,8 +644,14 @@ async def list_reviews(product_id: str):
 async def create_review(product_id: str, data: ReviewIn, user: dict = Depends(get_current_user)):
     if not (1 <= data.rating <= 5):
         raise HTTPException(400, "Rating must be 1-5")
+    photos = list(data.photos or [])[:MAX_REVIEW_PHOTOS]
     if not await db.products.find_one({"id": product_id}):
         raise HTTPException(404, "Product not found")
+
+    # Check whether this is a first-time PHOTO review by this user on this product
+    prev = await db.reviews.find_one({"product_id": product_id, "user_id": user["id"]}, {"_id": 0, "photos": 1})
+    had_photos_before = bool(prev and prev.get("photos"))
+
     doc = {
         "id": str(uuid.uuid4()),
         "product_id": product_id,
@@ -638,15 +660,23 @@ async def create_review(product_id: str, data: ReviewIn, user: dict = Depends(ge
         "rating": data.rating,
         "title": data.title.strip(),
         "body": data.body.strip(),
+        "photos": photos,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    # Upsert: one review per user per product
     await db.reviews.update_one(
         {"product_id": product_id, "user_id": user["id"]},
         {"$set": doc},
         upsert=True,
     )
-    return doc
+
+    points_earned = 0
+    if photos and not had_photos_before:
+        await _award_points(
+            user["id"], PHOTO_REVIEW_BONUS_POINTS, "photo_review_bonus",
+            {"product_id": product_id, "review_id": doc["id"]},
+        )
+        points_earned = PHOTO_REVIEW_BONUS_POINTS
+    return {**doc, "points_earned": points_earned}
 
 
 # ---------- Points ("Nest Rewards")
@@ -1099,6 +1129,12 @@ async def admin_update_status(order_id: str, data: OrderStatusIn, admin: dict = 
     if not order:
         raise HTTPException(404, "Order not found")
 
+    current = order.get("status", "created")
+    # No-op transitions are allowed silently
+    if data.status != current:
+        if data.status not in STATUS_TRANSITIONS.get(current, set()):
+            raise HTTPException(400, f"Invalid transition: {current} → {data.status}")
+
     now_iso = datetime.now(timezone.utc).isoformat()
     updated = await db.orders.find_one_and_update(
         {"id": order_id},
@@ -1109,9 +1145,11 @@ async def admin_update_status(order_id: str, data: OrderStatusIn, admin: dict = 
         return_document=True, projection={"_id": 0},
     )
 
-    # Refund redeemed points if we're moving to 'cancelled' for the first time
-    was_cancelled = order.get("status") == "cancelled"
-    if data.status == "cancelled" and not was_cancelled:
+    # Refund redeemed points ONLY when moving from a refundable state to 'cancelled'
+    # (i.e. before shipping). Cancelling after shipped/delivered does not refund.
+    was_cancelled = current == "cancelled"
+    refundable_prev = current in {"created", "paid"}
+    if data.status == "cancelled" and not was_cancelled and refundable_prev:
         redeemed = int(order.get("points_redeemed", 0) or 0)
         if redeemed > 0:
             await _award_points(order["user_id"], redeemed, "order_refund", {"order_id": order_id})
@@ -1184,22 +1222,29 @@ async def seed_data():
         })
         logger.info("Seeded admin user")
 
-    # Reseed products (drop old ones since we changed the schema)
-    await db.products.delete_many({})
-    docs = []
-    for p in SEED_PRODUCTS:
-        docs.append({
-            **p, "id": str(uuid.uuid4()),
-            "stock": p.get("stock", 100), "featured": p.get("featured", False),
-            "original_price": p.get("original_price"),
-            "collection": p.get("collection", ""),
-            "gift_persons": p.get("gift_persons", []),
-            "gift_occasions": p.get("gift_occasions", []),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-    if docs:
-        await db.products.insert_many(docs)
-        logger.info(f"Seeded {len(docs)} products")
+    # Reseed products only if collection is empty or all products are original untouched seeds
+    count = await db.products.count_documents({})
+    admin_edited = await db.products.count_documents({"admin_edited": True})
+    if count == 0 or (admin_edited == 0 and count > 0 and not await db.settings.find_one({"key": "seeded"})):
+        await db.products.delete_many({})
+        docs = []
+        for p in SEED_PRODUCTS:
+            docs.append({
+                **p, "id": str(uuid.uuid4()),
+                "stock": p.get("stock", 100), "featured": p.get("featured", False),
+                "original_price": p.get("original_price"),
+                "collection": p.get("collection", ""),
+                "gift_persons": p.get("gift_persons", []),
+                "gift_occasions": p.get("gift_occasions", []),
+                "admin_edited": False,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        if docs:
+            await db.products.insert_many(docs)
+            await db.settings.update_one({"key": "seeded"}, {"$set": {"key": "seeded", "at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+            logger.info(f"Seeded {len(docs)} products")
+    else:
+        logger.info(f"Skipping product reseed: {admin_edited} admin edits detected across {count} products")
 
     # Seed editorial sections
     await db.editorials.delete_many({})

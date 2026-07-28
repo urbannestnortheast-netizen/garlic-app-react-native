@@ -7,6 +7,7 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
 import { colors, radius, spacing, type } from "@/src/theme";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
@@ -30,7 +31,7 @@ type Product = {
 };
 
 type Shortlist = { id: string; name: string; occasion: string };
-type Review = { id: string; user_name: string; rating: number; title: string; body: string; created_at: string };
+type Review = { id: string; user_name: string; rating: number; title: string; body: string; photos?: string[]; created_at: string };
 
 export default function ProductDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -47,8 +48,9 @@ export default function ProductDetail() {
   const [addedToSl, setAddedToSl] = useState<string | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
-  const [rvForm, setRvForm] = useState({ rating: 5, title: "", body: "" });
+  const [rvForm, setRvForm] = useState<{ rating: number; title: string; body: string; photos: string[] }>({ rating: 5, title: "", body: "", photos: [] });
   const [rvBusy, setRvBusy] = useState(false);
+  const [photoAward, setPhotoAward] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -123,19 +125,44 @@ export default function ProductDetail() {
     if (!user) return router.push("/(auth)/login");
     setRvBusy(true);
     try {
-      await api(`/products/${product.id}/reviews`, {
+      const r = await api<{ points_earned?: number }>(`/products/${product.id}/reviews`, {
         method: "POST", auth: true, body: rvForm,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       logInteraction(product.id, "review");
+      if (r.points_earned && r.points_earned > 0) {
+        setPhotoAward(r.points_earned);
+        setTimeout(() => setPhotoAward(null), 3200);
+      }
       setReviewModalOpen(false);
-      setRvForm({ rating: 5, title: "", body: "" });
+      setRvForm({ rating: 5, title: "", body: "", photos: [] });
       const rvs = await api<Review[]>(`/products/${product.id}/reviews`);
       setReviews(rvs);
       const p = await api<Product>(`/products/${product.id}`);
       setProduct(p);
     } catch {}
     finally { setRvBusy(false); }
+  };
+
+  const pickPhoto = async () => {
+    if (rvForm.photos.length >= 3) return;
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.55,
+      base64: true,
+    });
+    if (result.canceled || !result.assets?.length) return;
+    const asset = result.assets[0];
+    if (!asset.base64) return;
+    const dataUrl = `data:image/jpeg;base64,${asset.base64}`;
+    setRvForm({ ...rvForm, photos: [...rvForm.photos, dataUrl].slice(0, 3) });
+  };
+
+  const removePhoto = (idx: number) => {
+    setRvForm({ ...rvForm, photos: rvForm.photos.filter((_, i) => i !== idx) });
   };
 
   if (loading || !product) {
@@ -223,6 +250,26 @@ export default function ProductDetail() {
 
           {/* Reviews */}
           <View style={styles.reviewsSection}>
+            {/* Real Homes gallery — photos from reviews */}
+            {(() => {
+              const allPhotos = reviews.flatMap((r) => (r.photos || []).map((p) => ({ uri: p, author: r.user_name })));
+              if (allPhotos.length === 0) return null;
+              return (
+                <View style={styles.realHomes} testID="real-homes-gallery">
+                  <Text style={styles.reviewsEyebrow}>REAL HOMES</Text>
+                  <Text style={styles.reviewsTitle}>Seen in the wild</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, marginTop: spacing.md }} style={{ marginHorizontal: -spacing.xl, paddingHorizontal: spacing.xl }}>
+                    {allPhotos.map((ph, i) => (
+                      <View key={i} style={styles.realHomeTile} testID={`real-home-${i}`}>
+                        <Image source={{ uri: ph.uri }} style={styles.realHomeImg} contentFit="cover" />
+                        <Text style={styles.realHomeAuthor}>{ph.author}</Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                </View>
+              );
+            })()}
+
             <View style={styles.reviewsHeader}>
               <View>
                 <Text style={styles.reviewsEyebrow}>WHAT OTHERS SAY</Text>
@@ -256,6 +303,13 @@ export default function ProductDetail() {
                     </View>
                     {r.title ? <Text style={styles.reviewTitle}>{r.title}</Text> : null}
                     {r.body ? <Text style={styles.reviewBody}>{r.body}</Text> : null}
+                    {r.photos && r.photos.length > 0 && (
+                      <View style={styles.reviewPhotosRow}>
+                        {r.photos.map((uri, i) => (
+                          <Image key={i} source={{ uri }} style={styles.reviewPhoto} contentFit="cover" testID={`review-${r.id}-photo-${i}`} />
+                        ))}
+                      </View>
+                    )}
                   </View>
                 ))}
               </View>
@@ -298,6 +352,22 @@ export default function ProductDetail() {
                 value={rvForm.body}
                 onChangeText={(v) => setRvForm({ ...rvForm, body: v })}
               />
+              <Text style={styles.rvLab}>PHOTOS (UP TO 3) — EARN 100 pts FOR YOUR FIRST</Text>
+              <View style={styles.photoRow}>
+                {rvForm.photos.map((uri, i) => (
+                  <View key={i} style={styles.photoBox} testID={`review-photo-${i}`}>
+                    <Image source={{ uri }} style={styles.photoImg} contentFit="cover" />
+                    <Pressable onPress={() => removePhoto(i)} style={styles.photoRemove} testID={`remove-photo-${i}`}>
+                      <Feather name="x" size={12} color={colors.onSurfaceInverse} />
+                    </Pressable>
+                  </View>
+                ))}
+                {rvForm.photos.length < 3 && (
+                  <Pressable onPress={pickPhoto} style={styles.photoAdd} testID="add-photo-btn">
+                    <Feather name="plus" size={22} color={colors.brand} />
+                  </Pressable>
+                )}
+              </View>
               <Pressable style={styles.submitReview} onPress={submitReview} disabled={rvBusy} testID="submit-review-btn">
                 {rvBusy ? <ActivityIndicator color={colors.onBrandPrimary} /> : <Text style={styles.submitReviewText}>Post Review</Text>}
               </Pressable>
@@ -369,6 +439,13 @@ export default function ProductDetail() {
           </Pressable>
         </View>
       </SafeAreaView>
+      {/* Photo bonus toast */}
+      {photoAward !== null && (
+        <View style={styles.awardToast} testID="photo-award-toast">
+          <Feather name="award" size={18} color={colors.brandDark} />
+          <Text style={styles.awardText}>+{photoAward} pts for your first photo review!</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -421,6 +498,19 @@ const styles = StyleSheet.create({
   rvInput: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, fontFamily: "DMSans", fontSize: 14, color: colors.onSurface },
   submitReview: { backgroundColor: colors.brand, paddingVertical: spacing.md, borderRadius: radius.pill, alignItems: "center", marginTop: spacing.sm },
   submitReviewText: { color: colors.onBrandPrimary, fontFamily: "DMSansBold", letterSpacing: 1.5, textTransform: "uppercase", fontSize: 13 },
+  photoRow: { flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" },
+  photoBox: { width: 80, height: 80, borderRadius: radius.md, position: "relative" },
+  photoImg: { width: 80, height: 80, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary },
+  photoRemove: { position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: "rgba(44,41,37,0.85)", alignItems: "center", justifyContent: "center" },
+  photoAdd: { width: 80, height: 80, borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.brand, alignItems: "center", justifyContent: "center", backgroundColor: colors.brandLight },
+  reviewPhotosRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm, flexWrap: "wrap" },
+  reviewPhoto: { width: 72, height: 72, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary },
+  realHomes: { paddingBottom: spacing.xl },
+  realHomeTile: { width: 140 },
+  realHomeImg: { width: 140, height: 140, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary },
+  realHomeAuthor: { fontFamily: "DMSans", fontSize: 11, color: colors.mutedText, marginTop: spacing.xs, textAlign: "center" },
+  awardToast: { position: "absolute", top: 60, left: spacing.xl, right: spacing.xl, backgroundColor: colors.brandLight, paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderRadius: radius.pill, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, shadowColor: "#000", shadowOpacity: 0.1, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+  awardText: { fontFamily: "DMSansBold", fontSize: 13, color: colors.brandDark },
   modalBg: { flex: 1, backgroundColor: "rgba(44,41,37,0.4)", justifyContent: "flex-end" },
   modalCard: { backgroundColor: colors.surface, padding: spacing.xl, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, paddingBottom: spacing.xxxl },
   modalHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.lg },
