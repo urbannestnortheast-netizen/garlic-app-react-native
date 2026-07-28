@@ -3,6 +3,18 @@
 ## Vision
 A minimalist, aesthetic pastel shopping experience for home essentials, crockery, and decor curated for a young female audience. Inspired by Nestasia + Anthropologie design language.
 
+## Personalization — Nest Concierge
+- `interactions` collection logs {view, cart_add, wishlist, shortlist_add, review} events with weights 1/3/4/5/6
+- `GET /api/recommendations` aggregates user's top subcategory / category / collection affinities and returns products in those buckets that they haven't seen yet
+- Cold start (no interactions) → featured products
+- Shop home "Curated for You" carousel (auth users only)
+- Indexes: `interactions(user_id, created_at desc)`, `reviews(product_id)`, `reviews(product_id, user_id) unique`
+
+## Polish (Iteration 5)
+- Regex escape on `?q=` search (ReDoS hardening)
+- Product list now includes `average_rating` + `review_count` via `$lookup` (no N+1)
+- Points refunded automatically when admin sets order → `cancelled`
+
 ## MVP Features
 - **Onboarding** with elegant hero + custom "Garlic — BY URBAN NEST" typographic wordmark
 - **Auth**: signup + login (email OR mobile + password), JWT-based

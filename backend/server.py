@@ -784,19 +784,8 @@ async def recommendations(limit: int = 8, user: dict = Depends(get_current_user)
 
     pipe = [
         {"$match": match},
-        {
-            "$addFields": {
-                "score": {
-                    "$add": [
-                        {"$ifNull": [{"$arrayElemAt": [
-                            [subs.get(s, 0) for s in [*subs.keys()]], 0
-                        ]}, 0]},
-                    ]
-                }
-            }
-        },
         {"$sample": {"size": limit}},
-        {"$project": {"_id": 0, "score": 0}},
+        {"$project": {"_id": 0}},
     ]
     items = await db.products.aggregate(pipe).to_list(limit)
     if len(items) < limit:
@@ -1177,9 +1166,12 @@ app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], 
 # ---------- Startup Seed
 @app.on_event("startup")
 async def seed_data():
-    # Ensure unique index on shortlists.share_slug
+    # Ensure unique index on shortlists.share_slug + performance indexes
     try:
         await db.shortlists.create_index("share_slug", unique=True)
+        await db.reviews.create_index("product_id")
+        await db.reviews.create_index([("product_id", 1), ("user_id", 1)], unique=True)
+        await db.interactions.create_index([("user_id", 1), ("created_at", -1)])
     except Exception as e:
         logger.warning(f"Index create warning: {e}")
 
