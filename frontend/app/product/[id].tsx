@@ -11,6 +11,7 @@ import { colors, radius, spacing, type } from "@/src/theme";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 import { useCart } from "@/src/context/CartContext";
+import { logInteraction } from "@/src/api/interactions";
 
 const { width } = Dimensions.get("window");
 
@@ -56,6 +57,7 @@ export default function ProductDetail() {
       const rvs = await api<Review[]>(`/products/${id}/reviews`);
       setReviews(rvs);
       if (user) {
+        logInteraction(p.id, "view");
         try {
           const list = await api<Product[]>("/wishlist", { auth: true });
           setWished(list.some((x) => x.id === p.id));
@@ -76,6 +78,7 @@ export default function ProductDetail() {
       price: product.price,
       image: product.images[0],
     });
+    if (user) logInteraction(product.id, "cart_add");
     setAdded(true);
     setTimeout(() => setAdded(false), 1600);
   };
@@ -89,6 +92,7 @@ export default function ProductDetail() {
         method: "POST", auth: true, body: { product_id: product.id },
       });
       setWished(r.in_wishlist);
+      if (r.in_wishlist) logInteraction(product.id, "wishlist");
     } catch {}
   };
 
@@ -108,6 +112,7 @@ export default function ProductDetail() {
         method: "POST", auth: true, body: { product_id: product.id },
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      logInteraction(product.id, "shortlist_add");
       setAddedToSl(slId);
       setTimeout(() => { setSlModalOpen(false); setAddedToSl(null); }, 900);
     } catch {}
@@ -122,9 +127,9 @@ export default function ProductDetail() {
         method: "POST", auth: true, body: rvForm,
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      logInteraction(product.id, "review");
       setReviewModalOpen(false);
       setRvForm({ rating: 5, title: "", body: "" });
-      // Reload reviews + product summary
       const rvs = await api<Review[]>(`/products/${product.id}/reviews`);
       setReviews(rvs);
       const p = await api<Product>(`/products/${product.id}`);

@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import re
 import logging
 import uuid
 import hmac
@@ -162,6 +163,15 @@ class ReviewIn(BaseModel):
 
 class RedeemPointsIn(BaseModel):
     points: int = 0
+
+
+class InteractionIn(BaseModel):
+    product_id: str
+    event: str  # view | wishlist | review | shortlist_add | cart_add
+
+
+ALLOWED_EVENTS = {"view", "wishlist", "review", "shortlist_add", "cart_add"}
+EVENT_WEIGHTS = {"view": 1, "cart_add": 3, "wishlist": 4, "shortlist_add": 5, "review": 6}
 
 
 class EditorialTile(BaseModel):
@@ -502,8 +512,37 @@ async def list_products(
     if featured is not None:
         query["featured"] = featured
     if q:
-        query["name"] = {"$regex": q, "$options": "i"}
-    items = await db.products.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+        # Escape user input to prevent ReDoS via regex metacharacters
+        query["name"] = {"$regex": re.escape(q), "$options": "i"}
+
+    # Aggregation pipeline — join reviews to compute avg + count in one round-trip (no N+1)
+    pipeline = [
+        {"$match": query},
+        {"$sort": {"created_at": -1}},
+        {"$limit": 500},
+        {
+            "$lookup": {
+                "from": "reviews",
+                "localField": "id",
+                "foreignField": "product_id",
+                "as": "_reviews",
+            }
+        },
+        {
+            "$addFields": {
+                "review_count": {"$size": "$_reviews"},
+                "average_rating": {
+                    "$cond": [
+                        {"$gt": [{"$size": "$_reviews"}, 0]},
+                        {"$round": [{"$avg": "$_reviews.rating"}, 1]},
+                        0.0,
+                    ]
+                },
+            }
+        },
+        {"$project": {"_id": 0, "_reviews": 0}},
+    ]
+    items = await db.products.aggregate(pipeline).to_list(500)
     return items
 
 
@@ -661,6 +700,116 @@ async def get_points(user: dict = Depends(get_current_user)):
         "redeem_value": POINTS_REDEEM_VALUE,
         "transactions": txs[:50],
     }
+
+
+# ---------- Nest Concierge (Personalization)
+@api_router.post("/interactions")
+async def log_interaction(data: InteractionIn, user: dict = Depends(get_current_user)):
+    if data.event not in ALLOWED_EVENTS:
+        raise HTTPException(400, "Invalid event type")
+    if not await db.products.find_one({"id": data.product_id}, {"_id": 0, "id": 1}):
+        raise HTTPException(400, "Product not found")
+    await db.interactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "product_id": data.product_id,
+        "event": data.event,
+        "weight": EVENT_WEIGHTS.get(data.event, 1),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": True}
+
+
+@api_router.get("/recommendations")
+async def recommendations(limit: int = 8, user: dict = Depends(get_current_user)):
+    # Aggregate interactions into category/subcategory/collection affinity
+    pipeline = [
+        {"$match": {"user_id": user["id"]}},
+        {"$sort": {"created_at": -1}},
+        {"$limit": 200},
+        {
+            "$lookup": {
+                "from": "products", "localField": "product_id", "foreignField": "id",
+                "as": "product",
+            }
+        },
+        {"$unwind": "$product"},
+        {
+            "$group": {
+                "_id": None,
+                "seen_ids": {"$addToSet": "$product_id"},
+                "by_subcategory": {"$push": {"k": "$product.subcategory", "w": "$weight"}},
+                "by_category": {"$push": {"k": "$product.category", "w": "$weight"}},
+                "by_collection": {"$push": {"k": "$product.collection", "w": "$weight"}},
+            }
+        },
+    ]
+    agg = await db.interactions.aggregate(pipeline).to_list(1)
+    if not agg:
+        # Cold start: return featured products
+        pipe = [
+            {"$match": {"featured": True}},
+            {"$sample": {"size": limit}},
+            {"$project": {"_id": 0}},
+        ]
+        return await db.products.aggregate(pipe).to_list(limit)
+
+    row = agg[0]
+    seen = set(row.get("seen_ids", []))
+
+    def _tally(bucket):
+        totals: dict = {}
+        for entry in bucket:
+            key = entry.get("k") or ""
+            if not key:
+                continue
+            totals[key] = totals.get(key, 0) + int(entry.get("w", 1))
+        return totals
+
+    subs = _tally(row.get("by_subcategory", []))
+    cats = _tally(row.get("by_category", []))
+    cols = _tally(row.get("by_collection", []))
+
+    top_subs = [k for k, _ in sorted(subs.items(), key=lambda x: -x[1])[:3]]
+    top_cats = [k for k, _ in sorted(cats.items(), key=lambda x: -x[1])[:3]]
+    top_cols = [k for k, _ in sorted(cols.items(), key=lambda x: -x[1])[:3]]
+
+    match: dict = {"id": {"$nin": list(seen)}}
+    or_conds = []
+    if top_subs: or_conds.append({"subcategory": {"$in": top_subs}})
+    if top_cats: or_conds.append({"category": {"$in": top_cats}})
+    if top_cols: or_conds.append({"collection": {"$in": top_cols}})
+    if or_conds:
+        match["$or"] = or_conds
+
+    pipe = [
+        {"$match": match},
+        {
+            "$addFields": {
+                "score": {
+                    "$add": [
+                        {"$ifNull": [{"$arrayElemAt": [
+                            [subs.get(s, 0) for s in [*subs.keys()]], 0
+                        ]}, 0]},
+                    ]
+                }
+            }
+        },
+        {"$sample": {"size": limit}},
+        {"$project": {"_id": 0, "score": 0}},
+    ]
+    items = await db.products.aggregate(pipe).to_list(limit)
+    if len(items) < limit:
+        # Fill with featured products if we ran out
+        need = limit - len(items)
+        picked_ids = {p["id"] for p in items} | seen
+        fill = await db.products.aggregate([
+            {"$match": {"id": {"$nin": list(picked_ids)}, "featured": True}},
+            {"$sample": {"size": need}},
+            {"$project": {"_id": 0}},
+        ]).to_list(need)
+        items = items + fill
+    return items
 
 
 # ---------- Wishlist
@@ -957,6 +1106,10 @@ async def admin_list_orders(admin: dict = Depends(require_admin)):
 async def admin_update_status(order_id: str, data: OrderStatusIn, admin: dict = Depends(require_admin)):
     if data.status not in ALLOWED_STATUSES:
         raise HTTPException(400, f"Invalid status")
+    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(404, "Order not found")
+
     now_iso = datetime.now(timezone.utc).isoformat()
     updated = await db.orders.find_one_and_update(
         {"id": order_id},
@@ -966,8 +1119,13 @@ async def admin_update_status(order_id: str, data: OrderStatusIn, admin: dict = 
         },
         return_document=True, projection={"_id": 0},
     )
-    if not updated:
-        raise HTTPException(404, "Order not found")
+
+    # Refund redeemed points if we're moving to 'cancelled' for the first time
+    was_cancelled = order.get("status") == "cancelled"
+    if data.status == "cancelled" and not was_cancelled:
+        redeemed = int(order.get("points_redeemed", 0) or 0)
+        if redeemed > 0:
+            await _award_points(order["user_id"], redeemed, "order_refund", {"order_id": order_id})
     return updated
 
 

@@ -10,6 +10,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { colors, radius, spacing, tilePalette, type } from "@/src/theme";
 import { api } from "@/src/api/client";
 import BrandLogo from "@/src/components/BrandLogo";
+import { useAuth } from "@/src/context/AuthContext";
 
 const TILE_SIZE = 80;
 
@@ -22,6 +23,7 @@ type Editorial = { id: string; title: string; subtitle: string; tiles: Editorial
 
 export default function ShopScreen() {
   const router = useRouter();
+  const { user } = useAuth();
   const { width } = useWindowDimensions();
   const CARD_W = (width - spacing.xl * 2 - spacing.md) / 2;
   const styles = React.useMemo(() => makeStyles(width, CARD_W), [width, CARD_W]);
@@ -29,28 +31,32 @@ export default function ShopScreen() {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [editorials, setEditorials] = useState<Editorial[]>([]);
   const [featured, setFeatured] = useState<Product[]>([]);
+  const [recommended, setRecommended] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [c, col, ed, feat] = await Promise.all([
+      const promises: Promise<any>[] = [
         api<Category[]>("/categories"),
         api<Collection[]>("/collections"),
         api<Editorial[]>("/editorials"),
         api<Product[]>("/products?featured=true"),
-      ]);
+      ];
+      if (user) promises.push(api<Product[]>("/recommendations?limit=6", { auth: true }).catch(() => []));
+      const [c, col, ed, feat, recs] = await Promise.all(promises);
       setCats(c);
       setCollections(col);
       setEditorials(ed);
       setFeatured(feat);
+      setRecommended(recs || []);
     } catch (e) {
       console.warn(e);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -229,6 +235,33 @@ export default function ShopScreen() {
           </View>
         )}
 
+        {/* Curated for You (personalized) */}
+        {user && recommended.length > 0 && (
+          <View style={styles.section} testID="curated-for-you">
+            <Text style={styles.eyebrow}>NEST CONCIERGE</Text>
+            <Text style={styles.sectionTitle}>Curated for You</Text>
+            <ScrollView
+              horizontal
+              style={{ width, maxWidth: width }}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: spacing.md, marginTop: spacing.md }}
+            >
+              {recommended.map((p) => (
+                <Pressable
+                  key={p.id}
+                  testID={`curated-${p.id}`}
+                  style={styles.curatedCard}
+                  onPress={() => router.push(`/product/${p.id}`)}
+                >
+                  <Image source={{ uri: p.images[0] }} style={styles.curatedImg} contentFit="cover" />
+                  <Text style={styles.cardName} numberOfLines={2}>{p.name}</Text>
+                  <Text style={styles.cardPrice}>₹{p.price.toLocaleString("en-IN")}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Featured Products */}
         {featured.length > 0 && (
           <View style={styles.section}>
@@ -336,4 +369,6 @@ const makeStyles = (width: number, CARD_W: number) => StyleSheet.create({
   priceRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs },
   cardPrice: { fontFamily: "DMSansMedium", fontSize: 13, color: colors.onSurface },
   origPrice: { fontFamily: "DMSans", fontSize: 12, color: colors.mutedText, textDecorationLine: "line-through" },
+  curatedCard: { width: 160 },
+  curatedImg: { width: 160, height: 200, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md },
 });
