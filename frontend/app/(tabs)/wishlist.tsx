@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Dimensions } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, useWindowDimensions } from "react-native";
 import { Image } from "expo-image";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -8,14 +8,14 @@ import { colors, radius, spacing, type } from "@/src/theme";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/context/AuthContext";
 
-const { width } = Dimensions.get("window");
-const CARD_W = (width - spacing.xl * 2 - spacing.md) / 2;
-
 type Product = { id: string; name: string; price: number; images: string[] };
 
 export default function Wishlist() {
   const router = useRouter();
   const { user } = useAuth();
+  const { width } = useWindowDimensions();
+  const CARD_W = (width - spacing.xl * 2 - spacing.md) / 2;
+  const styles = React.useMemo(() => makeStyles(CARD_W), [CARD_W]);
   const [items, setItems] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -75,7 +75,7 @@ export default function Wishlist() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (CARD_W: number) => StyleSheet.create({
   header: { padding: spacing.xl, paddingBottom: spacing.md },
   eyebrow: { fontFamily: "DMSansMedium", fontSize: 11, letterSpacing: 2, color: colors.mutedText },
   title: { ...type.displayLG, marginTop: spacing.xs },

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Dimensions } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, useWindowDimensions } from "react-native";
 import { Image } from "expo-image";
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -7,14 +7,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { colors, radius, spacing, tilePalette, type } from "@/src/theme";
 import { api } from "@/src/api/client";
 
-const { width } = Dimensions.get("window");
-const CARD_W = (width - spacing.xl * 2 - spacing.md) / 2;
-
 type Tag = { id: string; name: string };
 type Product = { id: string; name: string; price: number; images: string[] };
 
 export default function Gifts() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const CARD_W = (width - spacing.xl * 2 - spacing.md) / 2;
+  const styles = React.useMemo(() => makeStyles(CARD_W), [CARD_W]);
   const [persons, setPersons] = useState<Tag[]>([]);
   const [occasions, setOccasions] = useState<Tag[]>([]);
   const [mode, setMode] = useState<"person" | "occasion">("person");
@@ -137,7 +137,7 @@ export default function Gifts() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (CARD_W: number) => StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.xl, paddingBottom: spacing.md },
   headerTitle: { fontFamily: "CormorantGaramondBold", fontSize: 22, color: colors.onSurface },
   stickyWrap: { backgroundColor: colors.surface, paddingBottom: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.divider },

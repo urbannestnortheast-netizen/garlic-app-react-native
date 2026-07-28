@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Dimensions } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, useWindowDimensions } from "react-native";
 import { Image } from "expo-image";
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -8,15 +8,15 @@ import { LinearGradient } from "expo-linear-gradient";
 import { colors, radius, spacing, type } from "@/src/theme";
 import { api } from "@/src/api/client";
 
-const { width } = Dimensions.get("window");
-const CARD_W = (width - spacing.xl * 2 - spacing.md) / 2;
-
 type Collection = { id: string; name: string; tagline: string; image: string };
 type Product = { id: string; name: string; price: number; original_price?: number; images: string[] };
 
 export default function CollectionDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const CARD_W = (width - spacing.xl * 2 - spacing.md) / 2;
+  const styles = React.useMemo(() => makeStyles(CARD_W), [CARD_W]);
   const [col, setCol] = useState<Collection | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,7 +80,7 @@ export default function CollectionDetail() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (CARD_W: number) => StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.xl, paddingBottom: spacing.md },
   headerTitle: { fontFamily: "CormorantGaramondBold", fontSize: 22, color: colors.onSurface },
   hero: { height: 220, marginHorizontal: spacing.xl, marginBottom: spacing.xl, borderRadius: radius.md, overflow: "hidden", justifyContent: "flex-end" },
