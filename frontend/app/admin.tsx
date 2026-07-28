@@ -14,20 +14,28 @@ type Product = {
   id: string;
   name: string;
   category: string;
+  subcategory: string;
   price: number;
+  original_price?: number;
   description: string;
   images: string[];
   material?: string;
   dimensions?: string;
   stock: number;
   featured: boolean;
+  collection?: string;
+  gift_persons: string[];
+  gift_occasions: string[];
 };
 
-type Category = { id: string; name: string };
+type Category = { id: string; name: string; subcategories: { id: string; name: string }[] };
+type Collection = { id: string; name: string };
+type Tag = { id: string; name: string };
 
 const empty = {
-  name: "", category: "home-essentials", price: "", description: "",
+  name: "", category: "dining", subcategory: "", price: "", original_price: "", description: "",
   imagesText: "", material: "", dimensions: "", stock: "100", featured: false,
+  collection: "", gift_persons: [] as string[], gift_occasions: [] as string[],
 };
 
 export default function Admin() {
@@ -35,6 +43,9 @@ export default function Admin() {
   const { user } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [persons, setPersons] = useState<Tag[]>([]);
+  const [occasions, setOccasions] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -44,12 +55,18 @@ export default function Admin() {
 
   const load = useCallback(async () => {
     try {
-      const [p, c] = await Promise.all([
+      const [p, c, col, pers, occ] = await Promise.all([
         api<Product[]>("/products"),
         api<Category[]>("/categories"),
+        api<Collection[]>("/collections"),
+        api<Tag[]>("/gift-persons"),
+        api<Tag[]>("/gift-occasions"),
       ]);
       setProducts(p);
       setCategories(c);
+      setCollections(col);
+      setPersons(pers);
+      setOccasions(occ);
     } catch {}
     finally { setLoading(false); }
   }, []);
@@ -75,9 +92,14 @@ export default function Admin() {
   const openEdit = (p: Product) => {
     setEditingId(p.id);
     setForm({
-      name: p.name, category: p.category, price: String(p.price), description: p.description,
+      name: p.name, category: p.category, subcategory: p.subcategory || "",
+      price: String(p.price), original_price: p.original_price ? String(p.original_price) : "",
+      description: p.description,
       imagesText: p.images.join("\n"), material: p.material || "", dimensions: p.dimensions || "",
       stock: String(p.stock), featured: p.featured,
+      collection: p.collection || "",
+      gift_persons: p.gift_persons || [],
+      gift_occasions: p.gift_occasions || [],
     });
     setErr(null);
     setModalOpen(true);
@@ -89,9 +111,10 @@ export default function Admin() {
     const price = parseFloat(form.price);
     const stock = parseInt(form.stock || "0", 10);
     if (isNaN(price)) return setErr("Invalid price.");
-    const body = {
+    const body: any = {
       name: form.name.trim(),
       category: form.category,
+      subcategory: form.subcategory,
       price,
       description: form.description,
       images: form.imagesText.split("\n").map((s: string) => s.trim()).filter(Boolean),
@@ -99,14 +122,18 @@ export default function Admin() {
       dimensions: form.dimensions,
       stock,
       featured: !!form.featured,
+      collection: form.collection,
+      gift_persons: form.gift_persons,
+      gift_occasions: form.gift_occasions,
     };
+    if (form.original_price) {
+      const op = parseFloat(form.original_price);
+      if (!isNaN(op)) body.original_price = op;
+    }
     setBusy(true);
     try {
-      if (editingId) {
-        await api(`/products/${editingId}`, { method: "PUT", auth: true, body });
-      } else {
-        await api("/products", { method: "POST", auth: true, body });
-      }
+      if (editingId) await api(`/products/${editingId}`, { method: "PUT", auth: true, body });
+      else await api("/products", { method: "POST", auth: true, body });
       setModalOpen(false);
       load();
     } catch (e: any) {
@@ -114,6 +141,14 @@ export default function Admin() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const toggleTag = (list: "gift_persons" | "gift_occasions", id: string) => {
+    setForm((prev: any) => {
+      const cur: string[] = prev[list] || [];
+      const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+      return { ...prev, [list]: next };
+    });
   };
 
   const del = async (id: string) => {
@@ -193,24 +228,74 @@ export default function Admin() {
                   {categories.map((c) => {
                     const on = form.category === c.id;
                     return (
-                      <Pressable
-                        key={c.id}
-                        onPress={() => setForm({ ...form, category: c.id })}
-                        style={[styles.chip, on && styles.chipOn]}
-                        testID={`admin-cat-${c.id}`}
-                      >
+                      <Pressable key={c.id} onPress={() => setForm({ ...form, category: c.id, subcategory: "" })} style={[styles.chip, on && styles.chipOn]} testID={`admin-cat-${c.id}`}>
                         <Text style={[styles.chipText, on && styles.chipTextOn]}>{c.name}</Text>
                       </Pressable>
                     );
                   })}
                 </ScrollView>
               </View>
+              {categories.find((c) => c.id === form.category)?.subcategories?.length ? (
+                <View style={{ gap: spacing.sm }}>
+                  <Text style={styles.lab}>SUBCATEGORY</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+                    {(categories.find((c) => c.id === form.category)?.subcategories || []).map((s) => {
+                      const on = form.subcategory === s.id;
+                      return (
+                        <Pressable key={s.id} onPress={() => setForm({ ...form, subcategory: s.id })} style={[styles.chip, on && styles.chipOn]} testID={`admin-sub-${s.id}`}>
+                          <Text style={[styles.chipText, on && styles.chipTextOn]}>{s.name}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              ) : null}
               <F label="Price (INR)" testID="admin-form-price" value={form.price} onChangeText={(v: string) => setForm({ ...form, price: v })} keyboardType="numeric" />
+              <F label="Original Price (optional, for sale)" testID="admin-form-original-price" value={form.original_price} onChangeText={(v: string) => setForm({ ...form, original_price: v })} keyboardType="numeric" />
               <F label="Description" testID="admin-form-desc" value={form.description} onChangeText={(v: string) => setForm({ ...form, description: v })} multiline numberOfLines={4} />
               <F label="Image URLs (one per line)" testID="admin-form-images" value={form.imagesText} onChangeText={(v: string) => setForm({ ...form, imagesText: v })} multiline numberOfLines={3} />
               <F label="Material" testID="admin-form-material" value={form.material} onChangeText={(v: string) => setForm({ ...form, material: v })} />
               <F label="Dimensions" testID="admin-form-dim" value={form.dimensions} onChangeText={(v: string) => setForm({ ...form, dimensions: v })} />
               <F label="Stock" testID="admin-form-stock" value={form.stock} onChangeText={(v: string) => setForm({ ...form, stock: v })} keyboardType="numeric" />
+              <View style={{ gap: spacing.sm }}>
+                <Text style={styles.lab}>COLLECTION</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+                  {[{ id: "", name: "None" }, ...collections].map((c) => {
+                    const on = form.collection === c.id;
+                    return (
+                      <Pressable key={c.id || "none"} onPress={() => setForm({ ...form, collection: c.id })} style={[styles.chip, on && styles.chipOn]} testID={`admin-col-${c.id || "none"}`}>
+                        <Text style={[styles.chipText, on && styles.chipTextOn]}>{c.name}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+              <View style={{ gap: spacing.sm }}>
+                <Text style={styles.lab}>GIFT FOR (multi)</Text>
+                <View style={styles.tagWrap}>
+                  {persons.map((p) => {
+                    const on = form.gift_persons.includes(p.id);
+                    return (
+                      <Pressable key={p.id} onPress={() => toggleTag("gift_persons", p.id)} style={[styles.chip, on && styles.chipOn]} testID={`admin-person-${p.id}`}>
+                        <Text style={[styles.chipText, on && styles.chipTextOn]}>{p.name}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+              <View style={{ gap: spacing.sm }}>
+                <Text style={styles.lab}>OCCASION (multi)</Text>
+                <View style={styles.tagWrap}>
+                  {occasions.map((o) => {
+                    const on = form.gift_occasions.includes(o.id);
+                    return (
+                      <Pressable key={o.id} onPress={() => toggleTag("gift_occasions", o.id)} style={[styles.chip, on && styles.chipOn]} testID={`admin-occ-${o.id}`}>
+                        <Text style={[styles.chipText, on && styles.chipTextOn]}>{o.name}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
               <View style={styles.switchRow}>
                 <Text style={styles.lab}>FEATURED</Text>
                 <Switch
@@ -254,9 +339,10 @@ const styles = StyleSheet.create({
   lab: { fontFamily: "DMSansMedium", fontSize: 11, letterSpacing: 2, color: colors.mutedText },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md, fontFamily: "DMSans", fontSize: 14, color: colors.onSurface, textAlignVertical: "top" },
   chip: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.brandTertiary },
-  chipOn: { backgroundColor: colors.onSurface },
+  chipOn: { backgroundColor: colors.brand },
   chipText: { fontFamily: "DMSans", fontSize: 12, color: colors.onSurface },
-  chipTextOn: { color: colors.onSurfaceInverse },
+  chipTextOn: { color: colors.onBrandPrimary },
+  tagWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   switchRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   err: { fontFamily: "DMSans", color: colors.error, backgroundColor: "#F9EDEC", padding: spacing.md, borderRadius: radius.lg },
   saveBtn: { marginTop: spacing.md, backgroundColor: colors.onSurface, paddingVertical: spacing.lg, borderRadius: radius.pill, alignItems: "center" },

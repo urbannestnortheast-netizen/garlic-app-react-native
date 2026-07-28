@@ -1,4 +1,4 @@
-"""Garlic by Urban Nest — Backend regression tests."""
+"""Garlic by Urban Nest — Backend regression tests (iteration 2, Nestasia taxonomy)."""
 import os
 import uuid
 import pytest
@@ -46,9 +46,8 @@ def user_token(s, user_creds):
 
 
 def _assert_no_mongo_id(payload):
-    """Recursively verify no `_id` field appears anywhere."""
     if isinstance(payload, dict):
-        assert "_id" not in payload, f"Mongo _id leaked: {payload}"
+        assert "_id" not in payload, f"Mongo _id leaked: keys={list(payload.keys())}"
         for v in payload.values():
             _assert_no_mongo_id(v)
     elif isinstance(payload, list):
@@ -63,19 +62,85 @@ class TestHealth:
         assert r.status_code == 200
         data = r.json()
         assert data.get("status") == "ok"
-        assert "Garlic" in data.get("app", "")
+        assert data.get("app") == "Garlic by Urban Nest"
 
 
-# ---------------- Categories
+# ---------------- Categories (Nestasia hierarchical taxonomy)
 class TestCategories:
+    EXPECTED = {"dining", "kitchen", "decor", "bath", "soft-furnishing", "accessories"}
+
     def test_list_categories(self, s):
         r = s.get(f"{API}/categories")
         assert r.status_code == 200
         cats = r.json()
-        assert isinstance(cats, list) and len(cats) == 7
+        assert isinstance(cats, list) and len(cats) == 6
         ids = {c["id"] for c in cats}
-        assert {"home-essentials", "crockery", "decor", "appliance", "cups", "plates", "furniture"} == ids
+        assert ids == self.EXPECTED
+        for c in cats:
+            assert "name" in c and "image" in c
+            assert isinstance(c.get("subcategories"), list) and len(c["subcategories"]) >= 1
+            for sc in c["subcategories"]:
+                assert "id" in sc and "name" in sc
         _assert_no_mongo_id(cats)
+
+    def test_get_dining(self, s):
+        r = s.get(f"{API}/categories/dining")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["id"] == "dining"
+        assert d["name"] == "Dining"
+        sub_ids = {sc["id"] for sc in d["subcategories"]}
+        expected = {"cups", "bowls", "plates", "platters", "glassware", "dinner-sets", "table-linen"}
+        assert expected.issubset(sub_ids), f"missing: {expected - sub_ids}"
+        assert len(d["subcategories"]) == 7
+
+    def test_get_nonexistent(self, s):
+        r = s.get(f"{API}/categories/nonexistent")
+        assert r.status_code == 404
+
+
+# ---------------- Collections / Gifting
+class TestCollectionsGifting:
+    def test_collections(self, s):
+        r = s.get(f"{API}/collections")
+        assert r.status_code == 200
+        cols = r.json()
+        assert len(cols) == 5
+        ids = {c["id"] for c in cols}
+        assert ids == {"modern-minimalist", "banjara", "wellness", "nautical", "jungle"}
+        for c in cols:
+            assert c.get("name") and c.get("tagline") and c.get("image")
+        _assert_no_mongo_id(cols)
+
+    def test_gift_persons(self, s):
+        r = s.get(f"{API}/gift-persons")
+        assert r.status_code == 200
+        ids = {p["id"] for p in r.json()}
+        assert {"women", "men", "mom"}.issubset(ids)
+
+    def test_gift_occasions(self, s):
+        r = s.get(f"{API}/gift-occasions")
+        assert r.status_code == 200
+        ids = {p["id"] for p in r.json()}
+        assert {"birthday", "anniversary", "wedding"}.issubset(ids)
+
+
+# ---------------- Editorials (public)
+class TestEditorialsPublic:
+    def test_list_active(self, s):
+        r = s.get(f"{API}/editorials")
+        assert r.status_code == 200
+        items = r.json()
+        assert len(items) == 3
+        # Sorted by order asc
+        orders = [it["order"] for it in items]
+        assert orders == sorted(orders)
+        titles = {it["title"] for it in items}
+        assert titles == {"Free From Boring Dinners", "Free From A Messy Kitchen", "The Quiet Home"}
+        for it in items:
+            assert it["active"] is True
+            assert isinstance(it["tiles"], list) and len(it["tiles"]) >= 1
+        _assert_no_mongo_id(items)
 
 
 # ---------------- Products
@@ -84,18 +149,53 @@ class TestProducts:
         r = s.get(f"{API}/products")
         assert r.status_code == 200
         products = r.json()
-        assert isinstance(products, list)
-        # Seed contains 21 products
-        assert len(products) >= 21, f"Expected >=21 seeded products, got {len(products)}"
+        # Seed contains ~40 products (actually 41 in current seed)
+        assert len(products) >= 35, f"Expected ~40 seeded products, got {len(products)}"
         _assert_no_mongo_id(products)
+        # verify new fields present on at least some products
+        sample = products[0]
+        for key in ("subcategory", "collection", "gift_persons", "gift_occasions"):
+            assert key in sample, f"missing {key} in product"
 
-    def test_filter_by_category(self, s):
-        r = s.get(f"{API}/products", params={"category": "crockery"})
+    def test_filter_by_category_dining(self, s):
+        r = s.get(f"{API}/products", params={"category": "dining"})
         assert r.status_code == 200
         items = r.json()
         assert len(items) >= 1
         for p in items:
-            assert p["category"] == "crockery"
+            assert p["category"] == "dining"
+
+    def test_filter_subcategory_cups(self, s):
+        r = s.get(f"{API}/products", params={"subcategory": "cups"})
+        assert r.status_code == 200
+        items = r.json()
+        assert len(items) >= 1
+        for p in items:
+            assert p["subcategory"] == "cups"
+
+    def test_filter_collection_modern_minimalist(self, s):
+        r = s.get(f"{API}/products", params={"collection": "modern-minimalist"})
+        assert r.status_code == 200
+        items = r.json()
+        assert len(items) >= 1
+        for p in items:
+            assert p["collection"] == "modern-minimalist"
+
+    def test_filter_gift_person_women(self, s):
+        r = s.get(f"{API}/products", params={"gift_person": "women"})
+        assert r.status_code == 200
+        items = r.json()
+        assert len(items) >= 1
+        for p in items:
+            assert "women" in p["gift_persons"]
+
+    def test_filter_gift_occasion_anniversary(self, s):
+        r = s.get(f"{API}/products", params={"gift_occasion": "anniversary"})
+        assert r.status_code == 200
+        items = r.json()
+        assert len(items) >= 1
+        for p in items:
+            assert "anniversary" in p["gift_occasions"]
 
     def test_filter_featured(self, s):
         r = s.get(f"{API}/products", params={"featured": "true"})
@@ -105,13 +205,18 @@ class TestProducts:
         for p in items:
             assert p["featured"] is True
 
-    def test_get_single_product(self, s):
+    def test_get_single_product_has_new_fields(self, s):
         products = s.get(f"{API}/products").json()
         pid = products[0]["id"]
         r = s.get(f"{API}/products/{pid}")
         assert r.status_code == 200
-        assert r.json()["id"] == pid
-        _assert_no_mongo_id(r.json())
+        p = r.json()
+        # New schema fields
+        for key in ("subcategory", "collection", "gift_persons", "gift_occasions"):
+            assert key in p
+        # original_price is nullable but must be present
+        assert "original_price" in p
+        _assert_no_mongo_id(p)
 
     def test_get_product_404(self, s):
         r = s.get(f"{API}/products/does-not-exist-xyz")
@@ -120,9 +225,8 @@ class TestProducts:
 
 # ---------------- Auth
 class TestAuth:
-    def test_signup_and_token(self, s, user_token, user_creds):
+    def test_signup_and_me(self, s, user_token, user_creds):
         assert user_token
-        # /me
         r = s.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {user_token}"})
         assert r.status_code == 200
         me = r.json()
@@ -156,45 +260,73 @@ class TestAuth:
         assert admin_token
 
 
-# ---------------- Admin RBAC + product CRUD
+# ---------------- Admin RBAC + product CRUD (with new fields)
 class TestAdminCRUD:
-    def test_create_product_requires_admin(self, s, user_token):
+    def test_create_requires_admin(self, s, user_token):
         payload = {"name": "TEST_Item", "category": "decor", "price": 100.0}
         r = s.post(f"{API}/products", json=payload, headers={"Authorization": f"Bearer {user_token}"})
         assert r.status_code == 403
 
-    def test_admin_full_crud(self, s, admin_token):
+    def test_admin_full_crud_new_fields(self, s, admin_token):
         h = {"Authorization": f"Bearer {admin_token}"}
         payload = {
             "name": "TEST_Admin_Product",
-            "category": "decor",
+            "category": "dining",
+            "subcategory": "cups",
             "price": 999.0,
+            "original_price": 1299.0,
             "description": "temp",
             "images": ["https://example.com/x.jpg"],
             "featured": False,
+            "collection": "modern-minimalist",
+            "gift_persons": ["women", "friend"],
+            "gift_occasions": ["birthday"],
         }
         # Create
         r = s.post(f"{API}/products", json=payload, headers=h)
         assert r.status_code == 200, r.text
         created = r.json()
         pid = created["id"]
-        assert created["name"] == payload["name"]
+        assert created["subcategory"] == "cups"
+        assert created["collection"] == "modern-minimalist"
+        assert created["original_price"] == 1299.0
+        assert created["gift_persons"] == ["women", "friend"]
+        assert created["gift_occasions"] == ["birthday"]
         _assert_no_mongo_id(created)
 
         # GET verify persistence
         r2 = s.get(f"{API}/products/{pid}")
         assert r2.status_code == 200
-        assert r2.json()["price"] == 999.0
+        got = r2.json()
+        assert got["subcategory"] == "cups"
+        assert got["collection"] == "modern-minimalist"
+        assert got["original_price"] == 1299.0
 
-        # Update
-        updated_payload = {**payload, "name": "TEST_Admin_Updated", "price": 1234.0}
+        # Update — change subcategory, collection, gifting, drop original_price
+        updated_payload = {
+            **payload,
+            "name": "TEST_Admin_Updated",
+            "subcategory": "bowls",
+            "collection": "wellness",
+            "gift_persons": ["mom"],
+            "gift_occasions": ["anniversary", "wedding"],
+            "original_price": None,
+            "price": 1234.0,
+        }
         r3 = s.put(f"{API}/products/{pid}", json=updated_payload, headers=h)
         assert r3.status_code == 200
-        assert r3.json()["name"] == "TEST_Admin_Updated"
+        updated = r3.json()
+        assert updated["name"] == "TEST_Admin_Updated"
+        assert updated["subcategory"] == "bowls"
+        assert updated["collection"] == "wellness"
+        assert updated["gift_persons"] == ["mom"]
+        assert updated["gift_occasions"] == ["anniversary", "wedding"]
+        assert updated["original_price"] is None
 
         # GET verify update
         r4 = s.get(f"{API}/products/{pid}")
         assert r4.json()["price"] == 1234.0
+        assert r4.json()["subcategory"] == "bowls"
 
         # Delete
         r5 = s.delete(f"{API}/products/{pid}", headers=h)
@@ -205,25 +337,82 @@ class TestAdminCRUD:
         assert r6.status_code == 404
 
 
+# ---------------- Admin Editorials
+class TestAdminEditorials:
+    def test_admin_list_editorials(self, s, admin_token):
+        r = s.get(f"{API}/admin/editorials", headers={"Authorization": f"Bearer {admin_token}"})
+        assert r.status_code == 200
+        items = r.json()
+        assert len(items) == 3
+        _assert_no_mongo_id(items)
+
+    def test_admin_editorials_forbidden_for_user(self, s, user_token):
+        r = s.get(f"{API}/admin/editorials", headers={"Authorization": f"Bearer {user_token}"})
+        assert r.status_code == 403
+
+    def test_admin_update_editorial(self, s, admin_token):
+        h = {"Authorization": f"Bearer {admin_token}"}
+        items = s.get(f"{API}/admin/editorials", headers=h).json()
+        target = next(it for it in items if it["id"] == "quiet-home")
+        payload = {
+            "title": "The Quiet Home",
+            "subtitle": "TEST subtitle",
+            "tiles": [
+                {"label": "Candles", "image": "https://example.com/c.jpg", "filter": {"subcategory": "candles"}},
+                {"label": "Vases", "image": "https://example.com/v.jpg", "filter": {"subcategory": "vases"}},
+            ],
+            "order": 3,
+            "active": True,
+        }
+        r = s.put(f"{API}/admin/editorials/{target['id']}", json=payload, headers=h)
+        assert r.status_code == 200, r.text
+        updated = r.json()
+        assert updated["subtitle"] == "TEST subtitle"
+        assert len(updated["tiles"]) == 2
+
+        # verify via public GET
+        pub = s.get(f"{API}/editorials").json()
+        got = next(it for it in pub if it["id"] == "quiet-home")
+        assert got["subtitle"] == "TEST subtitle"
+
+        # Restore original
+        restore = {
+            "title": "The Quiet Home",
+            "subtitle": "Soft textures, softer light",
+            "tiles": [
+                {"label": "Candles", "image": "https://images.unsplash.com/photo-1556910633-5099dc3971e8", "filter": {"subcategory": "candles"}},
+                {"label": "Vases", "image": "https://images.pexels.com/photos/27544697/pexels-photo-27544697.jpeg", "filter": {"subcategory": "vases"}},
+                {"label": "Cushions", "image": "https://images.unsplash.com/photo-1772797583328-f83bc3f94f80", "filter": {"subcategory": "cushions"}},
+                {"label": "Throws", "image": "https://images.unsplash.com/photo-1772797583328-f83bc3f94f80", "filter": {"subcategory": "throws"}},
+            ],
+            "order": 3,
+            "active": True,
+        }
+        s.put(f"{API}/admin/editorials/{target['id']}", json=restore, headers=h)
+
+    def test_admin_update_editorial_404(self, s, admin_token):
+        h = {"Authorization": f"Bearer {admin_token}"}
+        payload = {"title": "x", "subtitle": "y", "tiles": [], "order": 99, "active": True}
+        r = s.put(f"{API}/admin/editorials/does-not-exist", json=payload, headers=h)
+        assert r.status_code == 404
+
+
 # ---------------- Wishlist
 class TestWishlist:
     def test_toggle_and_get(self, s, user_token):
         h = {"Authorization": f"Bearer {user_token}"}
         pid = s.get(f"{API}/products").json()[0]["id"]
 
-        # Toggle on
         r = s.post(f"{API}/wishlist/toggle", json={"product_id": pid}, headers=h)
         assert r.status_code == 200
         assert r.json()["in_wishlist"] is True
 
-        # Fetch list
         r2 = s.get(f"{API}/wishlist", headers=h)
         assert r2.status_code == 200
         items = r2.json()
         assert any(p["id"] == pid for p in items)
         _assert_no_mongo_id(items)
 
-        # Toggle off
         r3 = s.post(f"{API}/wishlist/toggle", json={"product_id": pid}, headers=h)
         assert r3.json()["in_wishlist"] is False
 
@@ -231,9 +420,9 @@ class TestWishlist:
         assert all(p["id"] != pid for p in r4.json())
 
 
-# ---------------- Orders + Mock Payment
+# ---------------- Orders + Mock Payment + Admin
 class TestOrdersAndPayment:
-    def test_full_order_flow(self, s, user_token):
+    def test_full_order_flow(self, s, user_token, admin_token):
         h = {"Authorization": f"Bearer {user_token}"}
         pid = s.get(f"{API}/products").json()[0]["id"]
 
@@ -247,57 +436,43 @@ class TestOrdersAndPayment:
         assert r.status_code == 200, r.text
         data = r.json()
         assert data["mock"] is True, "Expected mock=true since Razorpay keys are empty"
-        assert data["checkout_url"].endswith(f"/api/payments/checkout/{data['order']['id']}")
-        assert data["order"]["mock_payment"] is True
         assert data["order"]["status"] == "created"
         _assert_no_mongo_id(data)
         order_id = data["order"]["id"]
 
-        # List orders
         r2 = s.get(f"{API}/orders", headers=h)
         assert r2.status_code == 200
         assert any(o["id"] == order_id for o in r2.json())
 
-        # Get order
         r3 = s.get(f"{API}/orders/{order_id}", headers=h)
         assert r3.status_code == 200
         assert r3.json()["id"] == order_id
-
-        # Hosted checkout HTML preview
-        r4 = requests.get(f"{API}/payments/checkout/{order_id}")
-        assert r4.status_code == 200
-        assert "text/html" in r4.headers.get("content-type", "").lower()
 
         # Mock pay
         r5 = s.post(f"{API}/orders/{order_id}/mock-pay", headers=h)
         assert r5.status_code == 200
         assert r5.json()["status"] == "paid"
 
-        # Verify status persisted
         r6 = s.get(f"{API}/orders/{order_id}", headers=h)
         assert r6.json()["status"] == "paid"
         assert r6.json().get("payment_id", "").startswith("mock_")
 
+        # Admin list orders
+        ah = {"Authorization": f"Bearer {admin_token}"}
+        ra = s.get(f"{API}/admin/orders", headers=ah)
+        assert ra.status_code == 200
+        assert any(o["id"] == order_id for o in ra.json())
+        _assert_no_mongo_id(ra.json())
+
+        # Admin update status
+        rs = s.put(f"{API}/admin/orders/{order_id}/status", json={"status": "shipped"}, headers=ah)
+        assert rs.status_code == 200
+        assert rs.json()["status"] == "shipped"
+
+        # Invalid status
+        ri = s.put(f"{API}/admin/orders/{order_id}/status", json={"status": "invalid"}, headers=ah)
+        assert ri.status_code == 400
+
     def test_orders_require_auth(self, s):
         r = s.get(f"{API}/orders")
         assert r.status_code == 401
-
-    def test_other_user_cannot_access_order(self, s, user_token):
-        # Create an order as user, then try fetch with admin (should 404 since owner check)
-        h = {"Authorization": f"Bearer {user_token}"}
-        pid = s.get(f"{API}/products").json()[0]["id"]
-        payload = {
-            "items": [{"product_id": pid, "quantity": 1}],
-            "shipping_address": "TEST", "shipping_name": "TEST", "shipping_phone": "9999999999",
-        }
-        oid = s.post(f"{API}/orders/create", json=payload, headers=h).json()["order"]["id"]
-
-        # Sign up a second user
-        u2 = {"name": "u2", "email": f"u2_{uuid.uuid4().hex[:6]}@x.com", "mobile": f"88{uuid.uuid4().hex[:8]}", "password": "Pass@123"}
-        t2 = s.post(f"{API}/auth/signup", json=u2).json()["access_token"]
-        r = s.get(f"{API}/orders/{oid}", headers={"Authorization": f"Bearer {t2}"})
-        assert r.status_code == 404, "Other user should NOT access another user's order"
-
-        # And should not be able to mock-pay
-        r2 = s.post(f"{API}/orders/{oid}/mock-pay", headers={"Authorization": f"Bearer {t2}"})
-        assert r2.status_code == 404

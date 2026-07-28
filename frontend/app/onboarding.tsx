@@ -1,20 +1,17 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet, Dimensions, Image as RNImage } from "react-native";
+import { View, Text, Pressable, StyleSheet, Dimensions } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { colors, radius, spacing, type } from "@/src/theme";
+import BrandLogo from "@/src/components/BrandLogo";
 
-const { width, height: screenHeight } = Dimensions.get("window");
-const HERO_H = Math.round(screenHeight * 0.42);
-const LOGO_W = Math.round(width * 0.72);
-const LOGO_H = Math.round(LOGO_W * (469 / 802));
+const { width } = Dimensions.get("window");
 
 export default function Onboarding() {
   const router = useRouter();
   return (
     <View style={styles.root} testID="onboarding-screen">
-      {/* Hero interior image, top half */}
       <View style={styles.hero}>
         <Image
           source={{ uri: "https://images.unsplash.com/photo-1609081144289-eacc3108cd03" }}
@@ -29,15 +26,8 @@ export default function Onboarding() {
         />
       </View>
 
-      {/* Bottom logo + CTA area, cream background so logo blends */}
       <View style={styles.bottom}>
-        <RNImage
-          source={require("@/assets/brand/garlic-logo.jpg")}
-          style={styles.logo}
-          resizeMode="contain"
-          testID="brand-logo"
-        />
-        <Text style={styles.tag} testID="brand-tagline">BY URBAN NEST</Text>
+        <BrandLogo size="xl" testID="brand-logo" />
         <Text style={styles.tagline}>
           Aesthetic home essentials, crockery & decor curated for a softer life.
         </Text>
@@ -62,7 +52,7 @@ export default function Onboarding() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
-  hero: { height: "35%", width: "100%" },
+  hero: { height: "38%", width: "100%" },
   bottom: {
     flex: 1,
     alignItems: "center",
@@ -71,31 +61,19 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     backgroundColor: colors.surface,
   },
-  logo: {
-    width: 260,
-    height: 152,
-    marginTop: -spacing.md,
-  },
-  tag: {
-    ...type.meta,
-    color: colors.mutedText,
-    marginTop: spacing.xs,
-    letterSpacing: 3,
-  },
   tagline: {
-    ...type.bodyLg,
     color: colors.onSurfaceSecondary,
     textAlign: "center",
-    marginTop: spacing.lg,
+    marginTop: spacing.xl,
     marginBottom: spacing.xl,
-    maxWidth: "90%",
-    fontStyle: "italic",
+    maxWidth: "88%",
     fontFamily: "CormorantGaramond",
+    fontStyle: "italic",
     fontSize: 18,
     lineHeight: 26,
   },
   cta: {
-    backgroundColor: "#4A5F45",
+    backgroundColor: colors.brand,
     paddingVertical: spacing.lg,
     paddingHorizontal: spacing.xxxl,
     borderRadius: radius.pill,
@@ -103,7 +81,7 @@ const styles = StyleSheet.create({
   },
   ctaText: {
     fontFamily: "DMSansBold",
-    color: "#FCFBF8",
+    color: colors.onBrandPrimary,
     fontSize: 13,
     letterSpacing: 1.5,
     textTransform: "uppercase",

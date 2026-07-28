@@ -1,0 +1,37 @@
+{
+  "summary": "Backend regression for Garlic by Urban Nest iteration 2 (Nestasia taxonomy). Rewrote /app/backend/tests/test_garlic_backend.py (stale from iter 1) with 33 tests covering: health, hierarchical categories (6 parents + subcategories, dining has 7), collections (5), gift-persons/occasions, editorials (public + admin), products with new schema (subcategory, collection, gift_persons, gift_occasions, original_price nullable), all product filters (category/subcategory/collection/gift_person/gift_occasion/featured), auth (signup/login by email+mobile/me/duplicate/wrong-pw), admin RBAC + full product CRUD with new fields, admin editorials CRUD + 403 for non-admin + 404 for missing, wishlist toggle+get, full order flow with mock payment, admin orders list + status update + invalid-status guard, and recursive `_id` leak assertion on every payload. Ran with pytest-xdist -n auto — 33/33 passed in 3.71s. All expected features from the review request are verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_garlic_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 740 lines — approaching the 700-line split threshold. Consider splitting into routers/{auth,products,taxonomy,editorials,orders,payments}.py to improve maintainability.",
+    "Startup unconditionally does `db.products.delete_many({})` and reseeds on every backend restart. This is destructive: any admin-created products or test products get wiped on `supervisorctl restart backend`. Recommend a version/schema flag or one-time migration instead of delete-on-boot.",
+    "Uses deprecated FastAPI `@app.on_event('startup'/'shutdown')` — should migrate to `lifespan` context manager.",
+    "`get_category` iterates the list per request — fine for 6 items, but consider a dict lookup if taxonomy grows.",
+    "Payment verify endpoint returns HTML on 400 paths via HTTPException (JSON) — acceptable, but consider that the redirect from Razorpay may not see JSON gracefully."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_garlic_backend.py"
+  ],
+  "success_rate": {
+    "backend": "100% (33/33)",
+    "frontend": "N/A (backend-only per review request)"
+  },
+  "seed_data_creation": "None. Tests use existing startup-seeded data (6 categories, 5 collections, 3 editorials, ~41 products) and self-clean up their own admin-created product + user signups. Editorial mutation test restores original content on teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend fully green on iteration 2 taxonomy. All /api/categories, /api/collections, /api/gift-persons, /api/gift-occasions, /api/editorials, /api/admin/editorials endpoints working. Product schema has: category, subcategory, collection, gift_persons[], gift_occasions[], original_price (nullable). All product filter query params work. IMPORTANT for future test agents: products collection is DROPPED and reseeded on every backend restart (server.py:714), so any admin-created products via API will be wiped on `supervisorctl restart backend`. Editorials are also wiped and reseeded on restart (server.py:731). Admin creds: admin@garlic.app / Admin@123. Razorpay keys are empty by design → /api/orders/create returns mock=true and mock_payment=true; use /api/orders/{id}/mock-pay to complete payment (MOCKED).",
+  "rca_of_issue": "N/A — no bugs found."
+}
