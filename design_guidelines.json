@@ -1,0 +1,185 @@
+{
+  "app_name": "Garlic",
+  "personality": "3 Editorial Mobile LIGHT infused with pastel accents",
+  "personality_one_liner": "An aspirational, minimalist, and editorial shopping experience pairing elegant typography with soft, muted pastel tones for premium home decor.",
+  "color": {
+    "surface": "#FCFBF8",
+    "onSurface": "#2C2925",
+    "surfaceSecondary": "#F4EFE6",
+    "onSurfaceSecondary": "#4A4641",
+    "surfaceTertiary": "#EBE5DB",
+    "onSurfaceTertiary": "#5B5650",
+    "surfaceInverse": "#2C2925",
+    "onSurfaceInverse": "#FCFBF8",
+    "brand": "#E6CCBE",
+    "brandPrimary": "#D4A5A5",
+    "onBrandPrimary": "#2C2925",
+    "brandSecondary": "#C5D1C5",
+    "onBrandSecondary": "#2C2925",
+    "brandTertiary": "#E9E2D8",
+    "onBrandTertiary": "#2C2925",
+    "success": "#A7C4B5",
+    "onSuccess": "#1A3024",
+    "warning": "#E3C099",
+    "onWarning": "#3B2812",
+    "error": "#DDA7A5",
+    "onError": "#3D1A19",
+    "info": "#B5C8D4",
+    "onInfo": "#1E2A32",
+    "border": "#EBE5DB",
+    "borderStrong": "#C2BAB0",
+    "divider": "#EBE5DB"
+  },
+  "typography": {
+    "displayFontFamily": "Cormorant Garamond",
+    "textFontFamily": "DM Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Use generous vertical breathing room (xl/2xl) to mimic a magazine layout. Do not cramp elements. Cards and images should have substantial margins.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 0,
+    "md": 4,
+    "lg": 8,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Feather",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use frosted glass over product imagery for sticky headers or FABs.",
+      "Apply to the bottom tab bar to maintain an elevated, premium feel.",
+      "Use for featured collection overlays with proper gradient scrims for readability."
+    ],
+    "dont's": [
+      "Do not use on standard product cards or list rows.",
+      "Do not blur body content or form inputs.",
+      "Avoid heavy drop shadows; rely on glass, borders, and spacing."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Onboarding",
+      "purpose": "Introduce the aesthetic brand identity and guide the user into the shopping experience.",
+      "states": {
+        "loading": "Centered spinner",
+        "empty": "N/A",
+        "error": "N/A"
+      },
+      "layout": "Full-bleed hero image of a minimalist, pastel-toned living space. Elegant serif heading positioned at the bottom with a gradient scrim (transparent to surfaceInverse) ensuring readability. A single, distinct pill CTA 'Enter the Nest'."
+    },
+    {
+      "name": "Home",
+      "purpose": "Curated discovery hub featuring categories and aspirational home decor collections.",
+      "states": {
+        "loading": "Skeleton grid reflecting the layout structure",
+        "empty": "No products available at the moment.",
+        "error": "Unable to load the catalog. Please try again."
+      },
+      "layout": "Header with an elegant typography-based logo ('Garlic by Urban Nest'). A horizontal scrollable chip row for categories (Home Essentials, Crockery, Decor, Appliance, Cups, Plates, Furniture) using brandTertiary backgrounds. Below, an editorial-style 2-column masonry or consistent grid. Product cards have no shadows, a 1px border, large crisp images, and minimal metadata (title, price)."
+    },
+    {
+      "name": "Product Detail",
+      "purpose": "Immersive product showcase and path to purchase.",
+      "states": {
+        "loading": "Image skeleton and text placeholder blocks",
+        "empty": "Product not found.",
+        "error": "Failed to load product details."
+      },
+      "layout": "Large, full-width image gallery at the top with pagination dots. Below the image, heavy use of whitespace. The product title uses the display serif font. Clean tabs or sections for Dimensions, Materials, and Reviews. A fixed sticky bottom container (glassmorphic or solid surface) housing the 'Add to Cart' and 'Wishlist' actions, preventing the user from needing to scroll to buy."
+    },
+    {
+      "name": "Cart & Checkout",
+      "purpose": "Frictionless, easy-to-use review and payment process.",
+      "states": {
+        "loading": "Spinner during payment processing",
+        "empty": "Your cart is beautifully empty. Discover our collections.",
+        "error": "Payment failed. Please review your details."
+      },
+      "layout": "Minimal list layout with product thumbnails, name, price, and quantity controls. A quiet divider between items. A summary block at the bottom with Subtotal, Shipping, and Total, followed by a prominent sticky 'Proceed to Checkout' CTA integrated with Razorpay."
+    }
+  ],
+  "images": {
+    "onboarding_hero": {
+      "url": "https://images.unsplash.com/photo-1609081144289-eacc3108cd03",
+      "alt": "Minimalist aesthetic home interior neutral"
+    },
+    "product_crockery_1": {
+      "url": "https://images.pexels.com/photos/6611494/pexels-photo-6611494.jpeg",
+      "alt": "Handcrafted ceramic plates in a pottery workshop"
+    },
+    "product_crockery_2": {
+      "url": "https://images.pexels.com/photos/7674572/pexels-photo-7674572.jpeg",
+      "alt": "Minimalist arrangement of pastel ceramic bowls"
+    },
+    "product_decor_1": {
+      "url": "https://images.pexels.com/photos/27544697/pexels-photo-27544697.jpeg",
+      "alt": "Elegant minimalist arrangement in soft pastels"
+    },
+    "product_decor_2": {
+      "url": "https://images.pexels.com/photos/7307436/pexels-photo-7307436.jpeg",
+      "alt": "Modern pastel cone sculptures in a minimalist setting"
+    },
+    "product_furniture_1": {
+      "url": "https://images.unsplash.com/photo-1604578762246-41134e37f9cc",
+      "alt": "Minimalist dining room with brown wooden table"
+    },
+    "product_furniture_2": {
+      "url": "https://images.unsplash.com/photo-1772797583328-f83bc3f94f80",
+      "alt": "Modern living room with natural light and wooden accents"
+    },
+    "product_appliance_1": {
+      "url": "https://images.unsplash.com/photo-1556910633-5099dc3971e8",
+      "alt": "Blue pastel canister and aesthetic kitchen setup"
+    },
+    "product_appliance_2": {
+      "url": "https://images.unsplash.com/photo-1556185781-a47769abb7ee",
+      "alt": "White minimalist kitchen dishwasher and counters"
+    }
+  },
+  "haptics": {
+    "tab_press": "light",
+    "add_to_cart": "medium",
+    "wishlist_toggle": "light",
+    "category_select": "light",
+    "checkout_success": "success"
+  },
+  "instructions_to_main_agent": [
+    "Strictly adhere to the Editorial Mobile LIGHT guidelines combined with the custom pastel palette (Dusty Rose, Pastel Sage).",
+    "Avoid using pure black (#000000); use the designated onSurface charcoal (#2C2925) for high readability with an elegant touch.",
+    "Typography hierarchy is critical: Use 'Cormorant Garamond' strictly for headers, hero text, and product titles to give the 'Anthropologie' vibe. Use 'DM Sans' for all body text, prices, metadata, and buttons.",
+    "Ensure 'Add to Cart' CTAs are sticky at the bottom of the Product Detail Page and cart screens. Implement safe area padding correctly.",
+    "Do NOT use drop shadows on product cards. Rely on generous padding (xl/2xl), crisp imagery, and subtle borders (1px) for separation.",
+    "When displaying text over imagery (e.g., Onboarding screen), you MUST apply the top-to-bottom gradient scrim using expo-linear-gradient to guarantee WCAG contrast.",
+    "For the App Logo, use a text-based elegant typography logo reading 'Garlic' or 'Garlic by Urban Nest' using the display font rather than a generic vector icon.",
+    "Implement the categories horizontally via scrollable pills using the brandTertiary token."
+  ]
+}
