@@ -151,6 +151,13 @@ class CreateOrderIn(BaseModel):
     shipping_phone: str
 
 
+class OrderStatusIn(BaseModel):
+    status: str  # created | paid | shipped | delivered | cancelled
+
+
+ALLOWED_STATUSES = {"created", "paid", "shipped", "delivered", "cancelled"}
+
+
 # ============= Categories
 CATEGORIES = [
     {"id": "home-essentials", "name": "Home Essentials", "image": "https://images.unsplash.com/photo-1556910633-5099dc3971e8"},
@@ -414,6 +421,28 @@ async def mock_pay(order_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(404, "Order not found")
     await db.orders.update_one({"id": order_id}, {"$set": {"status": "paid", "payment_id": f"mock_{uuid.uuid4().hex[:12]}", "paid_at": datetime.now(timezone.utc).isoformat()}})
     return {"ok": True, "status": "paid"}
+
+
+# ============= Admin: Orders
+@api_router.get("/admin/orders")
+async def admin_list_orders(admin: dict = Depends(require_admin)):
+    orders = await db.orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return orders
+
+
+@api_router.put("/admin/orders/{order_id}/status")
+async def admin_update_status(order_id: str, data: OrderStatusIn, admin: dict = Depends(require_admin)):
+    if data.status not in ALLOWED_STATUSES:
+        raise HTTPException(400, f"Invalid status. Allowed: {sorted(ALLOWED_STATUSES)}")
+    updated = await db.orders.find_one_and_update(
+        {"id": order_id},
+        {"$set": {"status": data.status, "status_updated_at": datetime.now(timezone.utc).isoformat()}},
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not updated:
+        raise HTTPException(404, "Order not found")
+    return updated
 
 
 @api_router.get("/payments/checkout/{order_id}", response_class=HTMLResponse)

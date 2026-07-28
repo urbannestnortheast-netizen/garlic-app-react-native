@@ -135,6 +135,19 @@ export default function Admin() {
         </Pressable>
       </View>
 
+      <View style={styles.tabsRow}>
+        <View style={[styles.tabPill, styles.tabActive]}>
+          <Text style={styles.tabTextActive}>Products</Text>
+        </View>
+        <Pressable
+          testID="admin-view-orders-btn"
+          style={styles.tabPill}
+          onPress={() => router.push("/admin-orders")}
+        >
+          <Text style={styles.tabText}>Orders</Text>
+        </Pressable>
+      </View>
+
       <Text style={styles.eyebrow}>{products.length} PRODUCTS</Text>
 
       {loading ? (

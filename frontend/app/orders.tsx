@@ -15,6 +15,7 @@ const STATUS_LABEL: Record<string, string> = {
   paid: "Confirmed",
   shipped: "Shipped",
   delivered: "Delivered",
+  cancelled: "Cancelled",
 };
 
 export default function Orders() {
@@ -62,8 +63,8 @@ export default function Orders() {
                   <Text style={styles.metaSm}>ORDER #{o.id.slice(0, 8).toUpperCase()}</Text>
                   <Text style={styles.date}>{new Date(o.created_at).toLocaleDateString()}</Text>
                 </View>
-                <View style={[styles.badge, o.status === "paid" && styles.badgePaid]}>
-                  <Text style={[styles.badgeText, o.status === "paid" && styles.badgeTextPaid]}>
+                <View style={[styles.badge, o.status === "paid" && styles.badgePaid, (o.status === "shipped" || o.status === "delivered") && styles.badgeShipped, o.status === "cancelled" && styles.badgeCancelled]}>
+                  <Text style={[styles.badgeText, o.status === "paid" && styles.badgeTextPaid, (o.status === "shipped" || o.status === "delivered") && styles.badgeTextShipped, o.status === "cancelled" && styles.badgeTextCancelled]}>
                     {STATUS_LABEL[o.status] || o.status}
                   </Text>
                 </View>
@@ -106,8 +107,12 @@ const styles = StyleSheet.create({
   date: { fontFamily: "DMSans", fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 2 },
   badge: { backgroundColor: colors.warning, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: radius.pill },
   badgePaid: { backgroundColor: colors.success },
+  badgeShipped: { backgroundColor: colors.info || "#B5C8D4" },
+  badgeCancelled: { backgroundColor: colors.error },
   badgeText: { fontFamily: "DMSansMedium", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "#3B2812" },
   badgeTextPaid: { color: "#1A3024" },
+  badgeTextShipped: { color: "#1E2A32" },
+  badgeTextCancelled: { color: "#3D1A19" },
   itemsList: { gap: spacing.md, borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: spacing.md },
   itemRow: { flexDirection: "row", gap: spacing.md, alignItems: "center" },
   itemImg: { width: 56, height: 56, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary },

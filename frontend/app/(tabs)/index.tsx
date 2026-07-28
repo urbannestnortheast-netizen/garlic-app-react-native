@@ -51,10 +51,12 @@ export default function ShopScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
       <View style={styles.header} testID="shop-header">
-        <View>
-          <Text style={styles.brandSmall}>URBAN NEST</Text>
-          <Text style={styles.brand}>Garlic</Text>
-        </View>
+        <Image
+          source={require("@/assets/brand/garlic-logo.jpg")}
+          style={styles.headerLogo}
+          contentFit="contain"
+          testID="header-logo"
+        />
         <Pressable
           testID="search-button"
           onPress={() => router.push("/(tabs)/wishlist")}
@@ -163,6 +165,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     backgroundColor: colors.surface,
   },
+  headerLogo: { width: 130, aspectRatio: 802 / 469 },
   brandSmall: { fontFamily: "DMSansMedium", fontSize: 10, letterSpacing: 2.5, color: colors.mutedText },
   brand: { fontFamily: "CormorantGaramondBold", fontSize: 34, color: colors.onSurface, lineHeight: 40 },
   chipContainer: { backgroundColor: colors.surface, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
