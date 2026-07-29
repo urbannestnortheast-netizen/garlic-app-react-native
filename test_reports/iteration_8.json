@@ -1,0 +1,70 @@
+{
+  "summary": "Iteration 8 FRONTEND end-to-end walk-through of the Razorpay (test-mode) checkout on the Expo web preview at http://localhost:3000, viewport 390x844. Signed up a fresh test user (testit8b_1785343566@garlic.app / mobile 9785343566 / password Test@1234), navigated Shop → tapped product-card (Boho Handwoven Rug, ₹5,999) → add-to-cart-btn → cart tab (subtotal ₹5,999, shipping Free, total ₹5,999) → proceed-checkout-btn → /checkout. Filled ship-name='Test Buyer', ship-phone='9999999999', ship-address='42, Nest Lane, Bengaluru 560001' and tapped pay-now-btn. POST /api/orders/create returned HTTP 200 with mock:false, key_id='rzp_test_TJNt4zJB9d9bpu', razorpay_order_id='order_TJOCFOgpKsP6Mt', amount_paise=599900, checkout_url='https://pastel-nest-shop.preview.emergentagent.com/api/payments/checkout/e18a6057-eefd-470d-bc00-8f865b2d2f75', order.status='created', order.mock_payment=false — exactly as spec. The Razorpay Checkout Modal (react-native Modal container with testID close-webview) DID slide in with header 'Razorpay Checkout' — but the WebView body rendered the literal string 'React Native WebView does not support this platform.' Zero iframes were injected. This is because react-native-webview has NO web-platform implementation (it stubs to a Text component). Therefore steps 7–10 of the review (card entry, OTP, redirect to /api/payments/verify, success screen, orders list showing Paid) CANNOT be exercised on the Expo web preview. Per the review's fallback ask, I verified the hosted checkout URL DIRECTLY in the browser (not inside the WebView): (a) HTTP 200, (b) HTML contains key_id, razorpay_order_id and rzp.open() auto-open script + a PAY NOW button, (c) Razorpay's checkout.razorpay.com iframe DOES inject and reaches the Razorpay 'Contact details' step (Test Mode ribbon visible, Garlic merchant, Total Amount 5999, email pre-filled from signup). So backend + hosted-checkout HTML are fully working; the blocker is purely the react-native-webview → web-platform gap in checkout.tsx. Native (Expo Go / device build) would work end-to-end since the identical HTML that renders correctly standalone is exactly what a device WebView would load. Note: iteration 7 already validated the server side for /api/orders/create, /api/payments/checkout/{id}, and /api/payments/verify (HMAC + idempotency + points award) with 14/14 pytest passing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "checkout.tsx WebView modal",
+        "issue": "On web platform the react-native-webview stub renders literal text 'React Native WebView does not support this platform.' inside the Razorpay Checkout modal — the hosted /api/payments/checkout/{order_id} page never loads, so the entire card entry / OTP / verify flow is unreachable from the Expo web preview. Reference: /app/frontend/app/checkout.tsx:6 (import WebView) and :207-220 (WebView usage inside <Modal>). Backend flow itself works — the same URL loaded directly in the browser injects checkout.razorpay.com and reaches the Razorpay 'Contact details' step successfully.",
+        "testID": "close-webview / pay-now-btn",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Pay ₹X → WebView Razorpay modal → /api/payments/verify → 'Order Placed' success screen",
+        "issue": "Cannot be completed on Expo web preview because react-native-webview has no web implementation. On native (iOS/Android/Expo Go) this flow would work — order creation, hosted checkout HTML, and verify are already proven server-side (iteration 7, 14/14 pytest). Frontend needs a Platform.OS==='web' branch that either uses an <iframe src={checkoutUrl}/> or a window.open(checkout_url) fallback so that web previewers (and QA in this container) can complete the flow.",
+        "affected_testIDs": ["pay-now-btn", "close-webview", "checkout-success", "view-orders-btn", "earned-points-box"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "/checkout",
+        "issues": [
+          "checkout-error text is not shown for the WebView platform-limitation case — the modal just opens onto the stubbed text; users have no in-app hint that they need to open the flow on the mobile app. Recommend adding a Platform.OS==='web' UX note or fallback link."
+        ]
+      }
+    ],
+    "react_native_issues": [
+      {
+        "component": "react-native-webview on web",
+        "issue": "react-native-webview does NOT support the web platform (it exports a stub Text saying 'React Native WebView does not support this platform.'). This makes the Razorpay hosted-checkout modal in checkout.tsx completely non-functional on Expo web preview. Reference: /app/frontend/app/checkout.tsx:6 (import { WebView } from 'react-native-webview') and :207-220 (<WebView source={{uri: checkoutUrl}} ... />). Suggested mitigation: `if (Platform.OS === 'web') { window.location.href = checkoutUrl; }` inside startPayment, or render an <iframe src={checkoutUrl} style={{flex:1, border:0}}/> when Platform.OS === 'web' in place of the WebView. On native this works as designed."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/tmp/01_landing.png (onboarding)",
+    "/tmp/02_signup.png (signup form filled)",
+    "/tmp/04_product.png (product detail Boho Handwoven Rug)",
+    "/tmp/05_cart.png (cart with ₹5,999 + proceed-checkout-btn)",
+    "/tmp/06_checkout.png (checkout form)",
+    "/tmp/07_after_pay.png (WebView modal open showing 'React Native WebView does not support this platform.')",
+    "/tmp/08_hosted_checkout.png (hosted checkout HTML loaded directly — 'Complete Your Payment', PAY NOW, auto-opening rzp modal)",
+    "/tmp/09_hosted_after_wait.png (Razorpay Checkout modal — Test Mode ribbon, Garlic merchant, Total 5999, Contact details step)"
+  ],
+  "action_items": [
+    "Add web-platform fallback in /app/frontend/app/checkout.tsx (around line 207-220): when Platform.OS === 'web', either replace <WebView> with <iframe src={checkoutUrl} style={{flex:1,borderWidth:0}}/> OR call window.location.href = checkoutUrl (redirect) OR window.open(checkoutUrl, '_self'). This unblocks the entire pay → verify → success flow on Expo web preview and makes the flow QA-able without a device.",
+    "Consider adding an onNavigationStateChange equivalent for web (iframe onLoad + polling location) so the modal auto-dismisses when the URL hits /api/payments/verify, matching the current native behaviour at checkout.tsx:210-218.",
+    "If native-only is the deliberate policy, at minimum on web show a friendly note in the modal (e.g., 'Please open Garlic on your phone to complete payment') instead of the raw react-native-webview stub string.",
+    "Once the web fallback lands, re-run this iteration_8 script to complete the Razorpay card 4111 1111 1111 1111 / 12/30 / CVV 123 / OTP 1234 flow and screenshot the 'Order Placed' + 'View My Orders' → Paid states."
+  ],
+  "critical_code_review_comments": [
+    "checkout.tsx uses react-native-webview unconditionally — no Platform.OS branching. Since Expo web preview is a supported target (frontend/.env EXPO_PUBLIC_BACKEND_URL is used, web preview is live at localhost:3000), this is a real UX regression on web.",
+    "The WebView onNavigationStateChange handler at checkout.tsx:210 assumes native URL changes; on web (once fallback lands) the equivalent hook must listen to iframe onLoad or window message events.",
+    "checkout.tsx:214 calls clear() and setSuccess(true) purely based on URL containing '/api/payments/verify' — no server-side re-check that the order actually flipped to 'paid'. If verify returns 400 (invalid signature) the WebView still navigates to /api/payments/verify (backend returns 400 HTML) and the frontend would still mark success. Recommend either: (a) parse a #status=paid fragment from the verify HTML, or (b) fetch GET /api/orders/{id} after modal dismiss and only render success if server order.status === 'paid'.",
+    "checkout.tsx has no timeout / cancel handling if the WebView never navigates (e.g., user closes Razorpay modal internally). The user is left stuck on a blank webview until they tap close-webview manually."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (backend re-validated by iteration_7 at 100%)",
+    "frontend": "60% — signup, product browse, add-to-cart, cart→checkout, order create + hosted-checkout HTML all work. WebView-hosted Razorpay modal step is blocked on web platform (react-native-webview stub)."
+  },
+  "seed_data_creation": "Created 1 disposable test user testit8b_1785343566@garlic.app (mobile 9785343566, password Test@1234) and 1 disposable order e18a6057-eefd-470d-bc00-8f865b2d2f75 (razorpay_order_id order_TJOCFOgpKsP6Mt) in status='created'. Also touched earlier testit8_1785343528@garlic.app during a first pass. No orders were marked paid (would require signature callback). No admin/seeded data mutated.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The Razorpay integration is fully wired on the server. Frontend UI up to /checkout works end-to-end on web (signup → shop → product → add-to-cart → cart → checkout → Pay). The ONLY web-platform blocker is react-native-webview at /app/frontend/app/checkout.tsx:6,207-220 which stubs to plain text on web. Once the main agent adds a Platform.OS==='web' branch (iframe or window.location.href = checkout_url), the rest of the flow (Razorpay card modal, verify redirect, success screen with points, orders list Paid) should work — I already proved by loading the hosted checkout URL directly that Razorpay's iframe injects, the Test-mode modal opens, the merchant/total/prefill are correct, and the flow reaches the 'Contact details' step. For the next re-test, use Razorpay test card 4111 1111 1111 1111, expiry 12/30, CVV 123, OTP 1234 exactly as spec, and expect POST /api/payments/verify to return 200 HTML + set order.status='paid' + award int(round(amount*0.1)) points (see iteration_7 verify details). Existing testIDs to re-use: signin-link, go-to-signup, signup-{name,email,mobile,password}-input, signup-submit-button, product-card-{id}, add-to-cart-btn, proceed-checkout-btn, ship-{name,phone,address}, pay-now-btn, close-webview, checkout-success, earned-points-box, view-orders-btn.",
+  "rca_of_issue": "Root cause: react-native-webview package does not ship a web-platform implementation. On react-native-web it exports a fallback component that renders <Text>React Native WebView does not support this platform.</Text>. /app/frontend/app/checkout.tsx (lines 6 and 207-220) imports and uses <WebView> unconditionally inside a <Modal>, so on the Expo web preview (which is what QA and this test agent use) the Razorpay hosted-checkout page cannot load and the entire post-Pay flow is unreachable. Reproduction: signup → add any product → cart → checkout → fill shipping → Pay ₹X → Modal opens with header 'Razorpay Checkout' → body shows literal red text 'React Native WebView does not support this platform.' Mitigation (main-agent side): guard the WebView with Platform.OS !== 'web' and add a web branch that either (i) sets window.location.href = checkoutUrl and mounts a listener for the verify URL, or (ii) mounts an <iframe src={checkoutUrl} style={{flex:1,borderWidth:0}}/> in place of <WebView>, or (iii) opens window.open(checkoutUrl, '_self') and handles the redirect back to the app after /api/payments/verify. On native (Expo Go / TestFlight / Play Store build) the current code already works because the identical hosted-checkout HTML I verified via direct browser navigation is exactly what a native WebView would render, and Razorpay's checkout.js runs there without issue."
+}
