@@ -5,6 +5,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import re
+import json
 import logging
 import uuid
 import hmac
@@ -1202,7 +1203,7 @@ async def hosted_checkout(order_id: str):
     currency: 'INR',
     name: 'Garlic',
     description: 'Order #{order_id[:8]}',
-    prefill: {{ name: {prefill_name!r}, contact: {prefill_phone!r}, email: {prefill_email!r} }},
+    prefill: {{ name: {json.dumps(prefill_name)}, contact: {json.dumps(prefill_phone)}, email: {json.dumps(prefill_email)} }},
     theme: {{ color: '#4A5F45' }},
     callback_url: '{API_BASE_URL}/api/payments/verify?order_id={order_id}',
     redirect: true
@@ -1234,6 +1235,11 @@ async def verify_payment(request: Request):
     order = await db.orders.find_one({"id": order_id})
     if not order:
         raise HTTPException(404, "Order not found")
+
+    # Cross-check: verify the razorpay_order_id from the callback matches the one stored on this order.
+    # This prevents replaying a (order_id, signature) tuple against a different internal order.
+    if order.get("razorpay_order_id") and order["razorpay_order_id"] != razorpay_order_id:
+        raise HTTPException(400, "Order mismatch")
 
     # Idempotent: skip if already paid
     if order.get("status") != "paid":
