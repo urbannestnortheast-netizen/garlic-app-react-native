@@ -96,6 +96,36 @@ export default function Checkout() {
     }
   };
 
+  // Called when the native WebView detects the /api/payments/verify redirect,
+  // or when the user taps "I've Completed Payment" on the web iframe fallback.
+  // Re-fetches the order and only shows success if backend confirms status === "paid".
+  const confirmPaymentSuccess = async () => {
+    if (!activeOrder) return;
+    setBusy(true);
+    try {
+      const o = await api<any>(`/orders/${activeOrder.id}`, { auth: true });
+      if (o.status === "paid") {
+        // Compute points earned (backend awards int(round(amount * 0.1)))
+        const earn = Math.round(Number(o.amount || 0) * 0.1);
+        setEarnedPoints(earn);
+        setCheckoutUrl(null);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        clear();
+        setSuccess(true);
+      } else {
+        setErr("Payment not confirmed yet. Please complete the payment in the Razorpay window and try again.");
+      }
+    } catch (e: any) {
+      setErr(e.message || "Could not verify payment");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleWebviewClose = () => {
+    setCheckoutUrl(null);
+  };
+
   if (success) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -198,26 +228,41 @@ export default function Checkout() {
       <Modal visible={!!checkoutUrl} animationType="slide" onRequestClose={() => setCheckoutUrl(null)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
           <View style={styles.header}>
-            <Pressable onPress={() => setCheckoutUrl(null)} testID="close-webview">
+            <Pressable onPress={() => handleWebviewClose()} testID="close-webview">
               <Feather name="x" size={22} color={colors.onSurface} />
             </Pressable>
             <Text style={styles.headerTitle}>Razorpay Checkout</Text>
             <View style={{ width: 22 }} />
           </View>
-          {checkoutUrl && (
+          {checkoutUrl && Platform.OS === "web" ? (
+            <>
+              {/* On web, react-native-webview is a stub. Use an iframe. */}
+              {/* @ts-ignore - iframe is valid DOM in RN-web */}
+              <iframe
+                src={checkoutUrl}
+                style={{ flex: 1, border: 0, width: "100%", height: "100%" } as any}
+                title="Razorpay Checkout"
+              />
+              <View style={styles.footer}>
+                <Text style={styles.mockNote}>
+                  After paying in the window above, tap the button below to verify.
+                </Text>
+                <Pressable testID="verify-payment-btn" style={styles.payBtn} onPress={confirmPaymentSuccess} disabled={busy}>
+                  {busy ? <ActivityIndicator color={colors.onSurfaceInverse} /> : <Text style={styles.payText}>{"I've Completed Payment"}</Text>}
+                </Pressable>
+                {err && <Text style={styles.err} testID="verify-error">{err}</Text>}
+              </View>
+            </>
+          ) : checkoutUrl ? (
             <WebView
               source={{ uri: checkoutUrl }}
               onNavigationStateChange={(nav) => {
                 if (nav.url.includes("/api/payments/verify")) {
-                  setTimeout(() => {
-                    setCheckoutUrl(null);
-                    clear();
-                    setSuccess(true);
-                  }, 800);
+                  setTimeout(() => confirmPaymentSuccess(), 800);
                 }
               }}
             />
-          )}
+          ) : null}
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
