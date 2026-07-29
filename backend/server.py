@@ -1163,12 +1163,57 @@ async def hosted_checkout(order_id: str):
         raise HTTPException(404, "Order not found")
     if not RAZORPAY_KEY_ID or not order.get("razorpay_order_id"):
         return HTMLResponse(f"<html><body style='font-family:system-ui;padding:24px;background:#FCFBF8;'><h2>Payment Preview</h2><p>Razorpay keys not configured. Order {order_id}: ₹{order['amount']:.2f}</p></body></html>")
-    return HTMLResponse(f"""<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/></head>
-<body style='font-family:system-ui;background:#FCFBF8;color:#2C2925;padding:24px;text-align:center;'>
-<h2>Complete Your Payment</h2><p>Order ₹{order['amount']:.2f}</p>
-<button id='pay' style='background:#4A5F45;color:#FCFBF8;border:0;padding:14px 24px;border-radius:999px;font-size:16px;'>Pay Now</button>
+
+    # Fetch user for prefill
+    u = await db.users.find_one({"id": order.get("user_id")}, {"_id": 0, "password_hash": 0}) or {}
+    prefill_name = order.get("shipping_name") or u.get("name") or ""
+    prefill_phone = order.get("shipping_phone") or u.get("mobile") or ""
+    prefill_email = u.get("email") or ""
+
+    html = f"""<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'/>
+<title>Garlic Checkout</title>
+<style>
+  body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:#FCFBF8;color:#2C2925;padding:32px 24px;text-align:center;margin:0;min-height:100vh;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;align-items:center;}}
+  h1{{font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:28px;margin:8px 0;}}
+  p.brand{{letter-spacing:3px;text-transform:uppercase;font-size:11px;color:#7A756F;margin:0 0 24px;}}
+  .amt{{font-family:Georgia,serif;font-size:36px;font-weight:700;color:#4A5F45;margin:16px 0 4px;}}
+  .lbl{{font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#7A756F;}}
+  button{{background:#2C2925;color:#FCFBF8;border:0;padding:16px 40px;border-radius:999px;font-size:14px;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;cursor:pointer;margin-top:24px;}}
+  button:disabled{{opacity:0.6;}}
+  .card{{background:#fff;border-radius:20px;padding:28px 24px;box-shadow:0 4px 24px rgba(0,0,0,0.06);max-width:400px;width:100%;box-sizing:border-box;}}
+  .note{{font-size:12px;color:#7A756F;margin-top:16px;}}
+</style>
+</head>
+<body>
+  <div class='card'>
+    <p class='brand'>Garlic by Urban Nest</p>
+    <h1>Complete Your Payment</h1>
+    <div class='lbl'>Total Payable</div>
+    <div class='amt'>₹{order['amount']:.2f}</div>
+    <button id='pay'>Pay Now</button>
+    <p class='note'>Powered by Razorpay · Secure Test Mode</p>
+  </div>
 <script src='https://checkout.razorpay.com/v1/checkout.js'></script>
-<script>document.getElementById('pay').onclick=function(){{new Razorpay({{key:'{RAZORPAY_KEY_ID}',order_id:'{order['razorpay_order_id']}',amount:{order['amount_paise']},currency:'INR',name:'Garlic',callback_url:'{API_BASE_URL}/api/payments/verify?order_id={order_id}',redirect:true,theme:{{color:'#4A5F45'}}}}).open();}};</script></body></html>""")
+<script>
+  var options = {{
+    key: '{RAZORPAY_KEY_ID}',
+    order_id: '{order['razorpay_order_id']}',
+    amount: {order['amount_paise']},
+    currency: 'INR',
+    name: 'Garlic',
+    description: 'Order #{order_id[:8]}',
+    prefill: {{ name: {prefill_name!r}, contact: {prefill_phone!r}, email: {prefill_email!r} }},
+    theme: {{ color: '#4A5F45' }},
+    callback_url: '{API_BASE_URL}/api/payments/verify?order_id={order_id}',
+    redirect: true
+  }};
+  var rzp = new Razorpay(options);
+  document.getElementById('pay').onclick = function(){{ rzp.open(); }};
+  // Auto-open on load for smoother UX
+  window.addEventListener('load', function(){{ setTimeout(function(){{ rzp.open(); }}, 300); }});
+</script>
+</body></html>"""
+    return HTMLResponse(html)
 
 
 @api_router.post("/payments/verify")
@@ -1180,14 +1225,37 @@ async def verify_payment(request: Request):
     razorpay_signature = form.get("razorpay_signature")
     if not (order_id and razorpay_order_id and razorpay_payment_id and razorpay_signature):
         raise HTTPException(400, "Missing verification data")
+    if not RAZORPAY_KEY_SECRET:
+        raise HTTPException(500, "Razorpay not configured")
     expected = hmac.new(RAZORPAY_KEY_SECRET.encode(), f"{razorpay_order_id}|{razorpay_payment_id}".encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, razorpay_signature):
         raise HTTPException(400, "Invalid signature")
-    await db.orders.update_one(
-        {"id": order_id},
-        {"$set": {"status": "paid", "payment_id": razorpay_payment_id, "paid_at": datetime.now(timezone.utc).isoformat()}},
+
+    order = await db.orders.find_one({"id": order_id})
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    # Idempotent: skip if already paid
+    if order.get("status") != "paid":
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.orders.update_one(
+            {"id": order_id},
+            {
+                "$set": {"status": "paid", "payment_id": razorpay_payment_id, "paid_at": now_iso},
+                "$push": {"history": {"status": "paid", "at": now_iso}},
+            },
+        )
+        # Award reward points on the net paid amount
+        earn = int(round(float(order.get("amount", 0)) * POINTS_RATE_PER_RUPEE))
+        if earn > 0:
+            await _award_points(order["user_id"], earn, "order_earn", {"order_id": order_id})
+
+    return HTMLResponse(
+        "<html><body style='font-family:system-ui;padding:32px;text-align:center;background:#FCFBF8;color:#2C2925;'>"
+        "<h2 style='font-family:Georgia,serif;'>Payment Successful</h2>"
+        "<p>Thank you for shopping with Garlic. You may close this window.</p>"
+        "</body></html>"
     )
-    return HTMLResponse("<html><body style='font-family:system-ui;padding:24px;text-align:center;background:#FCFBF8;'><h2>Payment Successful</h2></body></html>")
 
 
 # ---------- Health

@@ -3,6 +3,13 @@
 ## Vision
 A minimalist, aesthetic pastel shopping experience for home essentials, crockery, and decor curated for a young female audience. Inspired by Nestasia + Anthropologie design language.
 
+## Iteration 6 — Guard Rails + Nest Notes
+- **Order status transitions** validated (created→paid|cancelled, paid→shipped|cancelled, shipped→delivered|cancelled; delivered/cancelled terminal); invalid transitions return 400
+- **Refund scope**: points refund only when cancelling from created/paid, not from shipped/delivered
+- **Non-destructive seed**: startup skips product reseed if any product has `admin_edited=True` or if `settings.seeded` marker exists; admin CUD ops mark `admin_edited=True`
+- **Nest Notes (photo reviews)**: reviews accept `photos[]` (max 3, base64/data URLs); first photo-review per user per product awards **100 bonus pts** (reason=`photo_review_bonus`); later-added photos to an existing text review still award the bonus (once); repeat photo reviews idempotent
+- **Real Homes gallery** on product detail: horizontal carousel of every photo across all reviews, tagged with reviewer name
+
 ## Personalization — Nest Concierge
 - `interactions` collection logs {view, cart_add, wishlist, shortlist_add, review} events with weights 1/3/4/5/6
 - `GET /api/recommendations` aggregates user's top subcategory / category / collection affinities and returns products in those buckets that they haven't seen yet
