@@ -28,10 +28,10 @@ JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_MINUTES = int(os.environ.get("ACCESS_TOKEN_MINUTES", "10080"))
 RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8001")
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@garlic.app")
-ADMIN_MOBILE = os.environ.get("ADMIN_MOBILE", "9999999999")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin@123")
+API_BASE_URL = os.environ.get("API_BASE_URL", "")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
+ADMIN_MOBILE = os.environ.get("ADMIN_MOBILE", "")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -470,6 +470,34 @@ async def login(data: LoginIn):
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     return user
+
+
+@api_router.delete("/auth/me")
+async def delete_account(user: dict = Depends(get_current_user)):
+    """Permanently deletes the user's account and all associated personal data.
+    Required for Apple App Store review (5.1.1(v)).
+    Keeps orders (for accounting/refund integrity) but anonymises the user_id link.
+    """
+    uid = user["id"]
+    if user.get("role") == "admin":
+        raise HTTPException(400, "Admin accounts cannot self-delete. Contact support.")
+
+    # Remove personal collections
+    await db.shortlists.delete_many({"user_id": uid})
+    await db.reviews.delete_many({"user_id": uid})
+    await db.interactions.delete_many({"user_id": uid})
+    await db.points_history.delete_many({"user_id": uid})
+    await db.wishlists.delete_many({"user_id": uid})
+
+    # Anonymise past orders (retain for legal/accounting)
+    await db.orders.update_many(
+        {"user_id": uid},
+        {"$set": {"user_id": f"deleted_{uuid.uuid4().hex[:12]}", "shipping_name": "[deleted]", "shipping_phone": "[deleted]"}},
+    )
+
+    # Finally delete the user record
+    await db.users.delete_one({"id": uid})
+    return {"ok": True, "message": "Account deleted"}
 
 
 # ---------- Taxonomy Routes
@@ -1287,14 +1315,17 @@ async def seed_data():
     except Exception as e:
         logger.warning(f"Index create warning: {e}")
 
-    # Admin
-    if not await db.users.find_one({"email": ADMIN_EMAIL}):
-        await db.users.insert_one({
-            "id": str(uuid.uuid4()), "name": "Garlic Admin", "email": ADMIN_EMAIL,
-            "mobile": ADMIN_MOBILE, "password_hash": hash_password(ADMIN_PASSWORD),
-            "role": "admin", "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-        logger.info("Seeded admin user")
+    # Admin — only seed if all required env vars are provided (no source defaults for safety)
+    if ADMIN_EMAIL and ADMIN_MOBILE and ADMIN_PASSWORD:
+        if not await db.users.find_one({"email": ADMIN_EMAIL}):
+            await db.users.insert_one({
+                "id": str(uuid.uuid4()), "name": "Garlic Admin", "email": ADMIN_EMAIL,
+                "mobile": ADMIN_MOBILE, "password_hash": hash_password(ADMIN_PASSWORD),
+                "role": "admin", "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            logger.info("Seeded admin user")
+    else:
+        logger.warning("Admin seed skipped: ADMIN_EMAIL/ADMIN_MOBILE/ADMIN_PASSWORD not fully configured in environment")
 
     # Reseed products only if collection is empty or all products are original untouched seeds
     count = await db.products.count_documents({})

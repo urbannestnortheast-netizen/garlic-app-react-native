@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
+import React, { useCallback, useState } from "react";
+import { View, Text, StyleSheet, Pressable, ScrollView, Alert, Platform, ActivityIndicator } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -11,6 +11,7 @@ export default function Profile() {
   const router = useRouter();
   const { user, logout } = useAuth();
   const [points, setPoints] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadPoints = useCallback(async () => {
     if (!user) return;
@@ -21,6 +22,45 @@ export default function Profile() {
   }, [user]);
 
   useFocusEffect(useCallback(() => { loadPoints(); }, [loadPoints]));
+
+  const performDelete = async () => {
+    try {
+      setDeleting(true);
+      await api("/auth/me", { method: "DELETE", auth: true });
+      await logout();
+      if (Platform.OS === "web") {
+        // @ts-ignore
+        window.alert("Your account has been permanently deleted.");
+      } else {
+        Alert.alert("Account deleted", "Your account has been permanently deleted.");
+      }
+      router.replace("/onboarding");
+    } catch (e: any) {
+      const msg = e?.message || "Unable to delete account. Please try again.";
+      if (Platform.OS === "web") {
+        // @ts-ignore
+        window.alert(msg);
+      } else {
+        Alert.alert("Error", msg);
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const confirmDelete = () => {
+    const msg =
+      "This permanently deletes your account, wishlist, shortlists, reviews, and rewards points. Your past orders remain for accounting but are anonymised. This cannot be undone.";
+    if (Platform.OS === "web") {
+      // @ts-ignore
+      if (window.confirm("Delete Account\n\n" + msg)) performDelete();
+    } else {
+      Alert.alert("Delete Account", msg, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: performDelete },
+      ]);
+    }
+  };
 
   if (!user) {
     return (
@@ -90,6 +130,24 @@ export default function Profile() {
           <Feather name="log-out" size={18} color={colors.error} />
           <Text style={styles.logoutText}>Sign Out</Text>
         </Pressable>
+
+        {user.role !== "admin" && (
+          <Pressable
+            testID="profile-delete-account-btn"
+            style={styles.deleteBtn}
+            onPress={confirmDelete}
+            disabled={deleting}
+          >
+            {deleting ? (
+              <ActivityIndicator size="small" color={colors.mutedText} />
+            ) : (
+              <>
+                <Feather name="trash-2" size={16} color={colors.mutedText} />
+                <Text style={styles.deleteText}>Delete Account</Text>
+              </>
+            )}
+          </Pressable>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -114,6 +172,8 @@ const styles = StyleSheet.create({
   rowLabel: { flex: 1, fontFamily: "DMSans", fontSize: 15, color: colors.onSurface },
   logout: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.xl },
   logoutText: { fontFamily: "DMSansMedium", color: colors.error, fontSize: 15 },
+  deleteBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, marginHorizontal: spacing.xl, marginTop: spacing.md, paddingVertical: spacing.md, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border },
+  deleteText: { fontFamily: "DMSans", color: colors.mutedText, fontSize: 13, letterSpacing: 0.5 },
   emptyWrap: { alignItems: "center", padding: spacing.xxl, gap: spacing.sm },
   emptyTitle: { ...type.displaySM, marginTop: spacing.md, textAlign: "center" },
   emptyText: { ...type.body, textAlign: "center", marginBottom: spacing.md },

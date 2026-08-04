@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 10 backend regression PASSED for the deployment-readiness scope (15/16 tests green). Verified: (a) NEW DELETE /api/auth/me — admin self-delete correctly blocked with HTTP 400 'Admin accounts cannot self-delete', regular user delete returns {ok:true}, subsequent GET /api/auth/me returns 401, order is retained but anonymised (user_id starts with 'deleted_', shipping_name and shipping_phone both '[deleted]'); (b) Admin seed still works — POST /api/auth/login as admin@garlic.app / Admin@123 returns 200 with role='admin' and /auth/me confirms role, so removing the source-code ADMIN_* defaults did NOT break seeding since /app/backend/.env still holds real values; (c) Razorpay LIVE test-mode regression — POST /api/orders/create returns mock=false, key_id matches backend .env, order.razorpay_order_id starts with 'order_'; HMAC-SHA256(RAZORPAY_KEY_SECRET, '{oid}|{payment_id}') verify flips status to 'paid' and awards int(round(amount*0.1)) Nest Points; replaying the same verify is idempotent (points balance unchanged); bad signature is rejected (400) and the order stays 'created'; (d) baseline regression — GET /api/products, /api/categories, /api/editorials, /api/points, POST /api/products/{id}/reviews, admin PUT /api/admin/orders/{id}/status invalid-transition rejection (created→delivered → 400). ONE CRITICAL BUG DETECTED in the new DELETE /api/auth/me endpoint: it targets the WRONG Mongo collections for wishlist and points ledger — server.py:490 does `db.wishlists.delete_many(...)` but the real collection populated by POST /api/wishlist/toggle is `db.wishlist` (singular, see server.py:874-878); server.py:489 does `db.points_history.delete_many(...)` but the real points collection is `db.user_points` (see server.py:713, 725, 743). Direct MongoDB probe confirmed 1 wishlist doc and 1 user_points doc leaked for the deleted user. This is an Apple App Store 5.1.1(v) compliance blocker — the endpoint advertises full personal-data purge but does not purge the wishlist or the Nest Points ledger. Razorpay secrets read from /app/backend/.env for HMAC only and were NOT written to the report.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "DELETE /api/auth/me",
+        "issue": "Personal data leak on account delete: wishlist items and Nest Points ledger are NOT purged. server.py:490 targets `db.wishlists` (plural) but real collection is `db.wishlist` (see server.py:865-878). server.py:489 targets `db.points_history` but real collection is `db.user_points` (see server.py:713, 725, 743). Direct Mongo probe test_iteration10_delete_leak_probe.py:test_delete_purges_wishlist_and_points confirmed 1 wishlist doc + 1 user_points doc left behind after DELETE returned 200. Apple 5.1.1(v) compliance risk.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "DELETE /api/auth/me",
+        "issue": "Endpoint also targets `db.interactions.delete_many({user_id})` — confirmed collection exists (server.py:771) so this line is OK. Just noting: no admin GET /api/admin/orders/{id} exists (only list endpoint), so post-delete admin verification of anonymised order requires filtering the list. Not a bug, just an API gap; iteration 10 tests worked around it by filtering /api/admin/orders."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration10_deletion_admin_regression.py (15 tests: catalog + auth + admin seed + delete flow + razorpay verify/idempotency/bad-sig + admin status guardrail — ALL PASS)",
+    "/app/backend/tests/test_iteration10_delete_leak_probe.py (1 test: direct-Mongo probe of delete purge — FAILS, exposes wishlist/user_points collection-name bug)",
+    "/app/test_reports/pytest/iteration10.xml (JUnit XML)"
+  ],
+  "action_items": [
+    "CRITICAL — Fix DELETE /api/auth/me collection names in /app/backend/server.py. Change line 490 `db.wishlists` → `db.wishlist` and line 489 `db.points_history` → `db.user_points` (or add both if you plan to introduce a points_history log later). Re-run tests/test_iteration10_delete_leak_probe.py to confirm both leftover counts drop to 0.",
+    "Optional — Also consider purging `db.carts` / any pending-cart docs, `db.user_points` transactions history (already inside the user_points doc — deleting the whole doc is fine), and `db.payments` if that collection exists. Grep server.py for any other collection keyed by user_id that isn't currently in the delete block.",
+    "Optional — Expose GET /api/admin/orders/{order_id} for individual order lookup by admins; currently only the list endpoint exists which is inefficient when checking a single order."
+  ],
+  "critical_code_review_comments": [
+    "server.py:485-490 — delete_many collection names DO NOT match the collections written elsewhere in the same file. `db.wishlists` (plural, delete side) vs `db.wishlist` (singular, everywhere else). `db.points_history` (delete side) vs `db.user_points` (points award/spend/read). Pre-shipping this to Apple review would fail 5.1.1(v). Add integration coverage that (a) seeds a wishlist item, (b) awards points, (c) calls DELETE /api/auth/me, (d) asserts both collections have 0 docs for that user_id.",
+    "server.py:33-34 — ADMIN_EMAIL/ADMIN_MOBILE/ADMIN_PASSWORD now default to empty string. Startup emits `logger.warning('Admin seed skipped: ADMIN_EMAIL/... not fully configured')` if any is missing. Good defensive posture; if a fresh deploy accidentally clears the env, admin login will simply fail rather than seed a default 'admin/admin' credential. Verified admin login still works because /app/backend/.env still holds real values.",
+    "server.py:493-496 — Order anonymisation is a partial redaction; ship-address is retained (only name+phone masked). That is likely intentional (address may be legally required for accounting) but if privacy team wants full anonymisation, also mask `shipping_address`. Consider redacting the phone number to a hash if you want irreversibility (current `[deleted]` is fine for audit).",
+    "server.py:475-500 — No token-invalidation step. Because tokens are JWTs signed with the current secret and carry `id/name/email/mobile/role`, and get_current_user does `db.users.find_one({id})`, once the user record is deleted `get_current_user` will 401 on the next call (verified). Good — no server-side blacklist needed as long as get_current_user does the DB lookup (it does, at server.py's Depends chain).",
+    "server.py:483 — Correct admin guard order (role check BEFORE any deletion) so a mis-attempted admin self-delete cannot corrupt admin-owned rows. Verified with test_admin_cannot_self_delete."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration10_deletion_admin_regression.py (NEW — 15 tests covering the whole iteration-10 scope + Razorpay iteration-7 core regression)",
+    "/app/backend/tests/test_iteration10_delete_leak_probe.py (NEW — direct-Mongo probe that exposes the wishlist/points collection-name bug)"
+  ],
+  "success_rate": {
+    "backend": "15/16 = 93.75% — the 1 failure is the intentional Mongo-probe that flags the delete-endpoint collection-name bug (not a test-suite issue).",
+    "frontend": "NOT TESTED (backend-only scope per the review request)"
+  },
+  "seed_data_creation": "Multiple disposable TEST_it10_*@example.com and TEST_it10leak_*@example.com users created during the run (14 users approx). All were self-deleted or their wishlist/user_points cleaned up by the probe test's teardown block. Admin (admin@garlic.app) untouched. One live-Razorpay test order was created and marked 'paid' via HMAC verify; a second was created for the bad-signature test and left 'created'. No production data mutated.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "To retest after main-agent fix, just re-run: `cd /app/backend && python -m pytest tests/test_iteration10_deletion_admin_regression.py tests/test_iteration10_delete_leak_probe.py -v`. Everything should be 16/16 green once server.py:489-490 collection names are corrected. Razorpay HMAC path: read RAZORPAY_KEY_SECRET from /app/backend/.env via dotenv_values, compute hmac.new(secret, f'{razorpay_order_id}|{payment_id}', hashlib.sha256).hexdigest(), POST form-encoded (data=, NOT json=) to `{BASE_URL}/api/payments/verify?order_id={oid}` — endpoint returns 200 HTML on success. Admin creds are admin@garlic.app / Admin@123 (also mobile 9999999999). Public URL for tests: EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env (frontend/.env uses EXPO_PUBLIC_BACKEND_URL, not EXPO_BACKEND_URL — heads-up).",
+  "rca_of_issue": "RCA of the delete-endpoint leak bug: the new DELETE /api/auth/me handler (server.py:475-500) was written without cross-referencing the actual Mongo collection names used elsewhere in server.py. The developer assumed pluralised collection names (`wishlists`, `points_history`) whereas the rest of the codebase uses `wishlist` (singular, see server.py:865-879) and `user_points` (server.py:711-747). Because Motor lazily creates a collection on first write, the delete_many() call on the wrong name silently succeeds with 0 matches — no exception, no log, no failing test. Reproduction: (1) signup a fresh user, (2) POST /api/wishlist/toggle with any product_id, (3) DELETE /api/auth/me (200), (4) direct Mongo query `db.wishlist.count_documents({user_id: uid})` still returns 1. Mitigation: change line 490 to `await db.wishlist.delete_many({'user_id': uid})` and line 489 to `await db.user_points.delete_many({'user_id': uid})`. After the fix, run `pytest tests/test_iteration10_delete_leak_probe.py` — should pass. Also add a `_USER_COLLECTIONS = ['wishlist','shortlists','reviews','interactions','user_points']` constant near the top of server.py and iterate it in delete_account() so future collection additions are hard to forget."
+}

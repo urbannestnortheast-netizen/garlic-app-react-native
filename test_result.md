@@ -104,9 +104,8 @@
 
 user_problem_statement: |
   Enable live Razorpay (test mode) integration for the Garlic by Urban Nest e-commerce app.
-  User provided:
-    RAZORPAY_KEY_ID = rzp_test_TJNt4zJB9d9bpu
-    RAZORPAY_KEY_SECRET = E2QTv6G6CipaxHMtBMGBmBJE
+  Credentials are stored in /app/backend/.env (RAZORPAY_KEY_ID + RAZORPAY_KEY_SECRET).
+  Do not commit secrets into this file.
 
 backend:
   - task: "Razorpay live integration (test keys wired up)"
@@ -139,7 +138,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Razorpay live integration (test keys wired up)"
+    - "Deployment readiness fixes — iOS permissions, admin-seed safety, account deletion"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -147,28 +146,33 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Please backend-test the Razorpay integration end-to-end.
-      1. Login as admin (admin@garlic.app / Admin@123) OR create/register a new user.
-      2. POST /api/orders/create with a valid product → expect:
-           - HTTP 200
-           - response.mock == false
-           - response.order.razorpay_order_id matches ^order_[A-Za-z0-9]+$
-           - response.key_id == "rzp_test_TJNt4zJB9d9bpu"
-           - response.checkout_url points to /api/payments/checkout/{order_id}
-      3. GET the checkout_url and confirm the HTML contains:
-           - the key_id string
-           - the razorpay_order_id string
-           - checkout.razorpay.com/v1/checkout.js script tag
-      4. Simulate a payment signature and POST /api/payments/verify:
-           - With WRONG signature → expect HTTP 400 "Invalid signature".
-           - With CORRECT HMAC-SHA256 signature of "{razorpay_order_id}|{fake_payment_id}" using the real secret → expect HTTP 200 HTML "Payment Successful", and:
-             * order.status transitions to "paid"
-             * order.history contains a "paid" event
-             * user's Nest Points balance increases by floor(amount * POINTS_RATE_PER_RUPEE)
-             * repeating the same verify call is idempotent (no double point award, no duplicate history entry) — points balance and history length stay the same on 2nd call.
-      5. Regression: existing endpoints must still function
-           - GET /api/products, /api/categories, /api/editorials
-           - POST /api/reviews/{product_id}
-           - POST /api/orders/{order_id}/mock-pay (should still work if razorpay_order_id is missing / for legacy orders — but for orders created now, real Razorpay path is taken)
-           - Admin order status transitions guardrails still active.
-      Skip frontend testing for this iteration.
+      Deployment agent flagged 2 blockers + 3 warnings. Fixes applied — please regression-test the affected surfaces:
+
+      A) Backend account-deletion (NEW endpoint DELETE /api/auth/me)
+         - Signup a fresh user (unique email/mobile), get token.
+         - GET /api/auth/me → 200 with user.
+         - Add a wishlist item, create a shortlist, post a review, place an order (mock or Razorpay flow):
+             POST /api/orders/create → paid via mock-pay OR verify signature.
+         - Call DELETE /api/auth/me with the user's bearer token → expect 200 {ok:true}.
+         - Verify user is gone: subsequent GET /api/auth/me with same token → 401 "User not found".
+         - Verify personal collections purged for that user_id: shortlists, reviews, interactions, points_history, wishlists.
+         - Verify the past order still exists but user_id anonymised (starts with "deleted_") and shipping_name/phone == "[deleted]".
+         - Admin cannot self-delete: login as admin (admin@garlic.app / Admin@123 — creds in /app/memory/test_credentials.md), DELETE /api/auth/me → 400 "Admin accounts cannot self-delete."
+
+      B) Admin seed safety
+         - Confirm current backend still boots cleanly (admin seed still runs because .env has ADMIN_* set — we removed only the source-code defaults, .env values are intact).
+         - Confirm admin login still works: POST /api/auth/login {identifier: admin@garlic.app, password: Admin@123} → 200 with token & role=admin.
+
+      C) Razorpay regression
+         - Rerun the core Razorpay path used in iteration 7:
+             POST /api/orders/create (mock:false, real order_id, key_id set)
+             HMAC verify to /api/payments/verify → 200 + status paid + points award + idempotency.
+         - Confirm no regressions from the API_BASE_URL / server.py env-var changes.
+
+      D) Regression: existing endpoints unchanged
+         - GET /api/products, /api/categories, /api/editorials, /api/points, POST /api/reviews/{product_id}, admin STATUS_TRANSITIONS guardrails.
+
+      Testing type: backend only. Skip frontend UI tests.
+      Report to /app/test_reports/iteration_10.json.
+      Credentials file: /app/memory/test_credentials.md.
+      Razorpay secret & key_id: read from /app/backend/.env — do NOT commit them into the report.
