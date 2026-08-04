@@ -486,8 +486,8 @@ async def delete_account(user: dict = Depends(get_current_user)):
     await db.shortlists.delete_many({"user_id": uid})
     await db.reviews.delete_many({"user_id": uid})
     await db.interactions.delete_many({"user_id": uid})
-    await db.points_history.delete_many({"user_id": uid})
-    await db.wishlists.delete_many({"user_id": uid})
+    await db.user_points.delete_many({"user_id": uid})
+    await db.wishlist.delete_many({"user_id": uid})
 
     # Anonymise past orders (retain for legal/accounting)
     await db.orders.update_many(
