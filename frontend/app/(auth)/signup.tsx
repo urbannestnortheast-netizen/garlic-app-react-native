@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, Pressable, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
+import Feather from "@react-native-vector-icons/feather";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { colors, radius, spacing, type } from "@/src/theme";

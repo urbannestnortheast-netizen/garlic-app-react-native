@@ -1,6 +1,6 @@
 import React from "react";
 import { Tabs } from "expo-router";
-import { Feather } from "@expo/vector-icons";
+import Feather from "@react-native-vector-icons/feather";
 import { StyleSheet, View, Text } from "react-native";
 import { colors, spacing } from "@/src/theme";
 import { useCart } from "@/src/context/CartContext";

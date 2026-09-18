@@ -4,7 +4,7 @@ import {
   Platform, KeyboardAvoidingView,
 } from "react-native";
 import { WebView } from "react-native-webview";
-import { Feather } from "@expo/vector-icons";
+import Feather from "@react-native-vector-icons/feather";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";

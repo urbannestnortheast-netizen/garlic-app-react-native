@@ -138,7 +138,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Deployment readiness fixes — iOS permissions, admin-seed safety, account deletion"
+    - "Expo SDK 54 → 57 upgrade regression"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -146,33 +146,24 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Deployment agent flagged 2 blockers + 3 warnings. Fixes applied — please regression-test the affected surfaces:
+      Expo SDK upgraded 54 → 57. Please regression-test the app on web preview http://localhost:3000.
 
-      A) Backend account-deletion (NEW endpoint DELETE /api/auth/me)
-         - Signup a fresh user (unique email/mobile), get token.
-         - GET /api/auth/me → 200 with user.
-         - Add a wishlist item, create a shortlist, post a review, place an order (mock or Razorpay flow):
-             POST /api/orders/create → paid via mock-pay OR verify signature.
-         - Call DELETE /api/auth/me with the user's bearer token → expect 200 {ok:true}.
-         - Verify user is gone: subsequent GET /api/auth/me with same token → 401 "User not found".
-         - Verify personal collections purged for that user_id: shortlists, reviews, interactions, points_history, wishlists.
-         - Verify the past order still exists but user_id anonymised (starts with "deleted_") and shipping_name/phone == "[deleted]".
-         - Admin cannot self-delete: login as admin (admin@garlic.app / Admin@123 — creds in /app/memory/test_credentials.md), DELETE /api/auth/me → 400 "Admin accounts cannot self-delete."
+      Migration changes:
+      - expo 54.0.36 → 57.0.24 (+ every expo-* + react/react-native/react-native-web bumped via `expo install --fix`)
+      - app.json: removed `newArchEnabled` and `edgeToEdgeEnabled` (deprecated in SDK 55)
+      - @expo/vector-icons removed → replaced with @react-native-vector-icons/feather across ALL 23 screens (only Feather is used); imports rewritten from `import { Feather } from "@expo/vector-icons"` to `import Feather from "@react-native-vector-icons/feather"`.
+      - src/hooks/use-icon-fonts.ts CDN URL updated to load Feather.ttf from @react-native-vector-icons/feather@13.1.4 on Expo Go.
+      - expo-doctor: 20/20 checks pass. Metro bundles cleanly, app loads.
 
-      B) Admin seed safety
-         - Confirm current backend still boots cleanly (admin seed still runs because .env has ADMIN_* set — we removed only the source-code defaults, .env values are intact).
-         - Confirm admin login still works: POST /api/auth/login {identifier: admin@garlic.app, password: Admin@123} → 200 with token & role=admin.
+      Please verify:
+      1. Onboarding + Sign in + Sign up screens render, icons visible (Feather back-arrow, etc.).
+      2. Home tab loads with product cards, category tiles, category images, brand logo.
+      3. Product detail page opens; can add to cart; wishlist toggle works.
+      4. Cart tab shows items; Proceed to Checkout button visible.
+      5. Checkout screen: shipping fields, order summary, points toggle, and NEW coupon + gift wrap sections all render (mid-flight from prior iteration). Do NOT test end-to-end payment for this iteration — just render + navigation.
+      6. Profile tab: shows Sign Out and Delete Account buttons; icons visible.
+      7. Admin tab (login as admin@garlic.app / Admin@123): admin panel loads.
+      8. No red-box errors or missing-icon glyphs anywhere.
 
-      C) Razorpay regression
-         - Rerun the core Razorpay path used in iteration 7:
-             POST /api/orders/create (mock:false, real order_id, key_id set)
-             HMAC verify to /api/payments/verify → 200 + status paid + points award + idempotency.
-         - Confirm no regressions from the API_BASE_URL / server.py env-var changes.
-
-      D) Regression: existing endpoints unchanged
-         - GET /api/products, /api/categories, /api/editorials, /api/points, POST /api/reviews/{product_id}, admin STATUS_TRANSITIONS guardrails.
-
-      Testing type: backend only. Skip frontend UI tests.
-      Report to /app/test_reports/iteration_10.json.
-      Credentials file: /app/memory/test_credentials.md.
-      Razorpay secret & key_id: read from /app/backend/.env — do NOT commit them into the report.
+      Backend was NOT changed in this iteration — no backend testing needed.
+      Report to /app/test_reports/iteration_11.json.

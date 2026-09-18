@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
-import { Feather } from "@expo/vector-icons";
+import Feather from "@react-native-vector-icons/feather";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";

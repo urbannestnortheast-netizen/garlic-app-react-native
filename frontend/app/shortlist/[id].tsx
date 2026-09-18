@@ -4,7 +4,7 @@ import {
   Share, Platform, useWindowDimensions,
 } from "react-native";
 import { Image } from "expo-image";
-import { Feather } from "@expo/vector-icons";
+import Feather from "@react-native-vector-icons/feather";
 import { useLocalSearchParams, useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";

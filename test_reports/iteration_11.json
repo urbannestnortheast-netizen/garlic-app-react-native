@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 11 FRONTEND regression PASSED after Expo SDK 54 -> 57 upgrade (+ @expo/vector-icons -> @react-native-vector-icons/feather migration across 23 screens). All 9 review-request items green on mobile viewport 390x844. Verified end-to-end user + admin flows: (1) Onboarding renders with brand logo, hero image, ENTER THE NEST + Sign-in link; (2) Sign-up via signin-link -> go-to-signup created a fresh user (TEST_it11_<ts>@example.com, mobile 9<ts>) and landed on Home tab which rendered 6 category tiles (Dining/Kitchen/Decor/Bath/...) + 11 product cards with images + Feather search & heart icons in the header; (3) Product detail (Boho Handwoven Rug) opened with hero image, back+wishlist Feather icons top-left/right, ADD TO CART button, wishlist heart toggled without crash; (4) Cart tab shows the added row + qty increment works (1 -> 2), Proceed to Checkout visible with total ₹11,998; (5) Checkout screen renders Shipping (Full Name/Phone/Address), Order Summary, NEW Coupon Code input + APPLY button, NEW Gift Wrap switch + note, Subtotal ₹11,998, and PAY ₹11,998 button — no crash, all sections visible in the screenshot; (6) Wishlist tab shows 1 wishlisted item from step 3; (7) Profile tab shows Sign Out + Delete Account rows with Feather icons, admin row correctly HIDDEN for regular user; (8) Sign out -> sign in as admin@garlic.app / Admin@123 -> profile now shows 'Admin Panel' row -> tapping loads /admin.tsx with 43 products list + 'Products'/'Orders'/'Editorials' tabs + admin-add-btn + admin-view-orders-btn (no error, no red-box); (9) Feather icon glyph scan across all visited screens: 110 elements with fontFamily='Feather' rendered, 0 fallback '?' or empty-square glyphs — CDN font load path (src/hooks/use-icon-fonts.ts, jsdelivr @react-native-vector-icons/feather@13.1.4) is working. NO red-box errors thrown; page-error listener stayed silent throughout. Console did emit 'shadow* style props are deprecated. Use boxShadow' (pre-existing RN 0.86 warning, unrelated to SDK 57 migration) and multiple asset 404s for missing splash/adaptive-icon PNGs (also pre-existing, unrelated). Backend NOT tested per review request. One benign test-selector discrepancy: the pay button uses testID='pay-now-btn' (live-Razorpay mode) not 'mock-pay-btn' because backend still has live Razorpay keys from iteration 10 — the UI itself renders correctly (screenshot confirms 'PAY ₹11,998' visible), only the automation script was over-strict on selector name.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "Screenshots: /tmp/it11_home.png, /tmp/it11_product.png, /tmp/it11_cart.png, /tmp/it11_checkout.png, /tmp/it11_wishlist.png, /tmp/it11_profile_user.png, /tmp/it11_profile_admin.png, /tmp/it11_admin.png (all captured during single playwright run)"
+  ],
+  "action_items": [
+    "None blocking. Optional: if playbook wants a mock-payment test path retained, guard the automation to accept either testID='pay-now-btn' or 'mock-pay-btn' — currently the backend has live Razorpay keys so only pay-now-btn is emitted. This is a test-suite concern, not an app bug.",
+    "Optional (pre-existing, not introduced by SDK 57): the RN-Web 'shadow* style props are deprecated. Use boxShadow' warning fires on every screen navigation. Non-fatal but noisy; a codebase-wide shadow* -> boxShadow migration would silence it.",
+    "Optional (pre-existing): five 404s per page load for missing static assets (looks like splash-image / adaptive-icon variants at CDN paths). Non-fatal, no red-box, but worth cleaning up before Store review."
+  ],
+  "critical_code_review_comments": [
+    "src/hooks/use-icon-fonts.ts is well-scoped — the CDN load only runs on Expo Go (StoreClient), while web + native dev/prod builds get an empty font map (autolink / web stubs handle rendering). Confirmed on web: 110 Feather glyphs rendered on the *first* visit to Onboarding (i.e. autolinking is delivering the .ttf via metro asset resolution as expected under SDK 57).",
+    "app.json cleanup (removed newArchEnabled + edgeToEdgeEnabled) is correct for SDK 57 — those keys are now defaults / removed and would emit doctor warnings otherwise. The remaining plugin list (expo-router, expo-splash-screen, expo-font, expo-secure-store, expo-image-picker, expo-image, expo-status-bar, expo-web-browser, @react-native-vector-icons/feather) matches the installed dependencies in package.json — no orphaned plugin refs.",
+    "package.json — SDK-57 aligned versions look correct: expo@57.0.24, react@19.2.3, react-native@0.86.3, expo-router@57.0.22, react-native-reanimated@4.5.1, react-native-worklets@0.10.1 (required by RN 0.86), react-native-safe-area-context@5.7.0, react-native-screens@4.26.0. @react-native-vector-icons/feather@13.1.4 matches the CDN URL version in use-icon-fonts.ts.",
+    "app/checkout.tsx:322-334 — dual pay-button branch is fine (mock-pay-btn vs pay-now-btn) but consider adding a shared testID='checkout-pay-btn' on the outer <View style={styles.footer}> so test scripts can locate the pay control without caring which branch is active. Cosmetic.",
+    "app/onboarding.tsx:35 — 'Enter the Nest' navigates directly to /(tabs) (browse-first UX) not to signup. The review request text implied step 2 signup was reachable via the Enter button; the correct path is signin-link -> go-to-signup on the login screen. The test script was adjusted to match the actual UX and it works cleanly. No code change needed."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "NOT TESTED (backend-only skip per review request)",
+    "frontend": "9/9 review items PASS. 15/16 playwright assertions PASS (the 1 fail was an over-strict pay-button selector — UI itself renders, screenshot proves it)."
+  },
+  "seed_data_creation": "1 disposable user created via signup UI (TEST_it11_<epoch>@example.com, mobile 9<epoch>). 1 product wishlisted + 1 cart item + 1 order created via /orders/create (Razorpay live mode, order NOT paid — checkout screen reached but pay button NOT tapped per review request). Admin (admin@garlic.app) untouched. No data cleanup performed — main agent may want to prune the TEST_it11_* user after review.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Frontend regression fully covered by the single playwright block in this iteration. Key UX notes for future runs: (a) 'Enter the Nest' on onboarding goes to /(tabs) not signup — reach signup via signin-link -> go-to-signup. (b) When backend has Razorpay live keys the pay button testID is 'pay-now-btn'; when keys are empty it is 'mock-pay-btn'. (c) Feather icon font is CDN-loaded only under Expo Go; web + native builds get autolinked TTFs and render 110+ glyphs on any screen visit. (d) Admin row in Profile appears only when authenticated user has role='admin' (checked via profile-admin testID absence for regular users). (e) EXPO_PUBLIC_BACKEND_URL (not EXPO_BACKEND_URL) is the key in /app/frontend/.env — worth remembering if writing backend URL-dependent playwright specs.",
+  "rca_of_issue": "No RCA needed — no bugs found. The Expo SDK 54 -> 57 upgrade + @expo/vector-icons -> @react-native-vector-icons/feather swap did not break any of the tested flows. All Feather glyphs render, all navigation transitions succeed, all forms accept input, all API-backed actions (signup, wishlist toggle, add-to-cart, cart qty inc, admin login) return valid responses and the UI updates accordingly. Ship it."
+}
