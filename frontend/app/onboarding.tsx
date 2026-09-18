@@ -1,12 +1,10 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet, Dimensions } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { colors, radius, spacing, type } from "@/src/theme";
+import { colors, radius, spacing } from "@/src/theme";
 import BrandLogo from "@/src/components/BrandLogo";
-
-const { width } = Dimensions.get("window");
 
 export default function Onboarding() {
   const router = useRouter();

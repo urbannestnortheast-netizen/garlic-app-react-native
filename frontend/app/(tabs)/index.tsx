@@ -7,7 +7,7 @@ import { Image } from "expo-image";
 import { Feather } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { colors, radius, spacing, tilePalette, type } from "@/src/theme";
+import { colors, radius, spacing, tilePalette } from "@/src/theme";
 import { api } from "@/src/api/client";
 import BrandLogo from "@/src/components/BrandLogo";
 import { useAuth } from "@/src/context/AuthContext";

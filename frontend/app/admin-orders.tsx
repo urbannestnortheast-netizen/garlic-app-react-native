@@ -17,7 +17,7 @@ type Order = {
 const STATUS_FLOW = ["created", "paid", "shipped", "delivered", "cancelled"] as const;
 const STATUS_LABEL: Record<string, string> = {
   created: "Pending",
-  paid: "Confirmed",
+  paid: "Paid",
   shipped: "Shipped",
   delivered: "Delivered",
   cancelled: "Cancelled",

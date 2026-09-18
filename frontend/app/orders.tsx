@@ -12,7 +12,7 @@ type Order = { id: string; status: string; amount: number; items: OrderItem[]; c
 
 const STATUS_LABEL: Record<string, string> = {
   created: "Pending Payment",
-  paid: "Confirmed",
+  paid: "Paid",
   shipped: "Shipped",
   delivered: "Delivered",
   cancelled: "Cancelled",

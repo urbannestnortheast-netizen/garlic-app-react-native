@@ -139,6 +139,24 @@ class CreateOrderIn(BaseModel):
     shipping_name: str
     shipping_phone: str
     points_to_redeem: int = 0
+    coupon_code: str = ""
+    gift_wrap: bool = False
+    gift_note: str = ""
+
+
+class CouponIn(BaseModel):
+    code: str
+    kind: str  # "percent" | "flat"
+    value: float  # percent (1-100) or flat rupees
+    min_order: float = 0
+    max_discount: float = 0  # cap for percent coupons; 0 = no cap
+    active: bool = True
+    expires_at: str = ""  # ISO date string, optional
+
+
+class CouponApplyIn(BaseModel):
+    code: str
+    subtotal: float
 
 
 class OrderStatusIn(BaseModel):
@@ -203,9 +221,15 @@ STATUS_TRANSITIONS: dict = {
 
 POINTS_RATE_PER_RUPEE = 0.1
 POINTS_REDEEM_VALUE = 0.10
+GIFT_WRAP_PRICE = 49
+MAX_GIFT_NOTE_LEN = 240
 REFERRAL_BONUS_POINTS = 500
 PHOTO_REVIEW_BONUS_POINTS = 100
 MAX_REVIEW_PHOTOS = 3
+# ~2MB per photo base64-encoded (base64 is ~1.33× raw bytes, so 2.7M chars ≈ 2MB raw).
+MAX_REVIEW_PHOTO_CHARS = 2_800_000
+MAX_REVIEW_TITLE_LEN = 120
+MAX_REVIEW_BODY_LEN = 2000
 
 
 # ---------- Taxonomy
@@ -673,7 +697,26 @@ async def list_reviews(product_id: str):
 async def create_review(product_id: str, data: ReviewIn, user: dict = Depends(get_current_user)):
     if not (1 <= data.rating <= 5):
         raise HTTPException(400, "Rating must be 1-5")
-    photos = list(data.photos or [])[:MAX_REVIEW_PHOTOS]
+
+    title = (data.title or "").strip()
+    body = (data.body or "").strip()
+    if len(title) > MAX_REVIEW_TITLE_LEN:
+        raise HTTPException(400, f"Title must be <= {MAX_REVIEW_TITLE_LEN} characters")
+    if len(body) > MAX_REVIEW_BODY_LEN:
+        raise HTTPException(400, f"Review body must be <= {MAX_REVIEW_BODY_LEN} characters")
+
+    raw_photos = list(data.photos or [])[:MAX_REVIEW_PHOTOS]
+    photos: List[str] = []
+    for idx, p in enumerate(raw_photos):
+        if not isinstance(p, str) or not p:
+            continue
+        if len(p) > MAX_REVIEW_PHOTO_CHARS:
+            raise HTTPException(
+                413,
+                f"Photo #{idx + 1} exceeds the 2MB limit. Please choose a smaller image."
+            )
+        photos.append(p)
+
     if not await db.products.find_one({"id": product_id}):
         raise HTTPException(404, "Product not found")
 
@@ -687,8 +730,8 @@ async def create_review(product_id: str, data: ReviewIn, user: dict = Depends(ge
         "user_id": user["id"],
         "user_name": user["name"],
         "rating": data.rating,
-        "title": data.title.strip(),
-        "body": data.body.strip(),
+        "title": title,
+        "body": body,
         "photos": photos,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -858,6 +901,25 @@ async def recommendations(limit: int = 8, user: dict = Depends(get_current_user)
         ]).to_list(need)
         items = items + fill
     return items
+
+
+@api_router.get("/recently-viewed")
+async def recently_viewed(limit: int = 10, user: dict = Depends(get_current_user)):
+    """Products the user has recently 'viewed', deduplicated + hydrated in view order. Cold start returns []."""
+    pipeline = [
+        {"$match": {"user_id": user["id"], "event": "view"}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {"_id": "$product_id", "last_at": {"$first": "$created_at"}}},
+        {"$sort": {"last_at": -1}},
+        {"$limit": max(1, min(limit, 30))},
+    ]
+    rows = await db.interactions.aggregate(pipeline).to_list(30)
+    ids = [r["_id"] for r in rows]
+    if not ids:
+        return []
+    products = await db.products.find({"id": {"$in": ids}}, {"_id": 0}).to_list(50)
+    by_id = {p["id"]: p for p in products}
+    return [by_id[pid] for pid in ids if pid in by_id]
 
 
 # ---------- Wishlist
@@ -1032,6 +1094,98 @@ async def mark_bought(share_slug: str, data: ShortlistItemIn):
 
 
 # ---------- Orders
+async def _resolve_coupon(code: str, subtotal: float) -> Optional[dict]:
+    """Return the coupon dict if valid + applicable, else None. Raises HTTPException on invalid."""
+    if not code:
+        return None
+    coupon = await db.coupons.find_one({"code": code.strip().upper()}, {"_id": 0})
+    if not coupon:
+        raise HTTPException(400, "Invalid coupon code")
+    if not coupon.get("active", True):
+        raise HTTPException(400, "This coupon is no longer active")
+    exp = coupon.get("expires_at") or ""
+    if exp:
+        try:
+            if datetime.fromisoformat(exp.replace("Z", "+00:00")) < datetime.now(timezone.utc):
+                raise HTTPException(400, "This coupon has expired")
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # bad date format → treat as no expiry
+    min_order = float(coupon.get("min_order", 0) or 0)
+    if subtotal < min_order:
+        raise HTTPException(400, f"Coupon requires minimum order of ₹{int(min_order)}")
+    return coupon
+
+
+def _compute_coupon_discount(coupon: dict, subtotal: float) -> float:
+    kind = coupon.get("kind", "flat")
+    value = float(coupon.get("value", 0) or 0)
+    if kind == "percent":
+        disc = subtotal * (value / 100.0)
+        cap = float(coupon.get("max_discount", 0) or 0)
+        if cap > 0:
+            disc = min(disc, cap)
+    else:  # flat
+        disc = value
+    return round(max(0.0, min(disc, subtotal)), 2)
+
+
+@api_router.post("/coupons/apply")
+async def apply_coupon(data: CouponApplyIn, user: dict = Depends(get_current_user)):
+    coupon = await _resolve_coupon(data.code, data.subtotal)
+    if not coupon:
+        raise HTTPException(400, "Invalid coupon code")
+    disc = _compute_coupon_discount(coupon, data.subtotal)
+    return {
+        "code": coupon["code"],
+        "kind": coupon["kind"],
+        "value": coupon["value"],
+        "discount": disc,
+    }
+
+
+@api_router.get("/admin/coupons")
+async def admin_list_coupons(admin: dict = Depends(require_admin)):
+    return await db.coupons.find({}, {"_id": 0}).sort("code", 1).to_list(500)
+
+
+@api_router.post("/admin/coupons")
+async def admin_create_coupon(data: CouponIn, admin: dict = Depends(require_admin)):
+    code = data.code.strip().upper()
+    if not code:
+        raise HTTPException(400, "Code is required")
+    if data.kind not in ("percent", "flat"):
+        raise HTTPException(400, "Kind must be 'percent' or 'flat'")
+    if data.kind == "percent" and not (0 < data.value <= 100):
+        raise HTTPException(400, "Percent value must be between 0 and 100")
+    if data.kind == "flat" and data.value <= 0:
+        raise HTTPException(400, "Flat value must be positive")
+    doc = {
+        "code": code,
+        "kind": data.kind,
+        "value": float(data.value),
+        "min_order": float(data.min_order or 0),
+        "max_discount": float(data.max_discount or 0),
+        "active": bool(data.active),
+        "expires_at": data.expires_at or "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await db.coupons.update_one({"code": code}, {"$set": doc}, upsert=True)
+    except Exception as e:
+        raise HTTPException(500, f"Could not save coupon: {e}")
+    return doc
+
+
+@api_router.delete("/admin/coupons/{code}")
+async def admin_delete_coupon(code: str, admin: dict = Depends(require_admin)):
+    r = await db.coupons.delete_one({"code": code.strip().upper()})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Coupon not found")
+    return {"ok": True}
+
+
 @api_router.post("/orders/create")
 async def create_order(data: CreateOrderIn, user: dict = Depends(get_current_user)):
     if not data.items:
@@ -1050,18 +1204,40 @@ async def create_order(data: CreateOrderIn, user: dict = Depends(get_current_use
             "price": product["price"], "quantity": it.quantity, "line_total": line_total,
         })
 
-    # Apply redemption
+    # Apply coupon (against subtotal BEFORE points/gift-wrap)
+    coupon_discount = 0.0
+    coupon_summary: Optional[dict] = None
+    if data.coupon_code:
+        coupon = await _resolve_coupon(data.coupon_code, total)
+        if coupon:
+            coupon_discount = _compute_coupon_discount(coupon, total)
+            coupon_summary = {
+                "code": coupon["code"],
+                "kind": coupon["kind"],
+                "value": coupon["value"],
+                "discount": coupon_discount,
+            }
+
+    # Apply redemption (against subtotal AFTER coupon)
+    subtotal_after_coupon = max(0.0, total - coupon_discount)
     points_to_redeem = max(0, int(data.points_to_redeem or 0))
     if points_to_redeem > 0:
         bal = await _get_user_points_balance(user["id"])
         if points_to_redeem > bal:
             raise HTTPException(400, "Not enough Nest Points")
-        # Cap redemption at 30% of order total
-        max_redeemable_rupees = total * 0.3
+        # Cap redemption at 30% of order total after coupon
+        max_redeemable_rupees = subtotal_after_coupon * 0.3
         max_redeemable_points = int(max_redeemable_rupees / POINTS_REDEEM_VALUE)
         points_to_redeem = min(points_to_redeem, max_redeemable_points)
-    discount = round(points_to_redeem * POINTS_REDEEM_VALUE, 2)
-    payable = max(0.0, total - discount)
+    points_discount = round(points_to_redeem * POINTS_REDEEM_VALUE, 2)
+
+    # Gift wrap add-on
+    gift_wrap = bool(data.gift_wrap)
+    gift_note = (data.gift_note or "").strip()[:MAX_GIFT_NOTE_LEN]
+    gift_wrap_fee = GIFT_WRAP_PRICE if gift_wrap else 0
+
+    total_discount = round(coupon_discount + points_discount, 2)
+    payable = max(0.0, subtotal_after_coupon - points_discount + gift_wrap_fee)
     amount_paise = int(round(payable * 100))
 
     razorpay_order_id = None
@@ -1085,8 +1261,14 @@ async def create_order(data: CreateOrderIn, user: dict = Depends(get_current_use
         "shipping_address": data.shipping_address, "shipping_name": data.shipping_name,
         "shipping_phone": data.shipping_phone,
         "subtotal": total,
+        "coupon": coupon_summary,
+        "coupon_discount": coupon_discount,
         "points_redeemed": points_to_redeem,
-        "discount": discount,
+        "points_discount": points_discount,
+        "discount": total_discount,
+        "gift_wrap": gift_wrap,
+        "gift_note": gift_note if gift_wrap else "",
+        "gift_wrap_fee": gift_wrap_fee,
         "amount": payable, "amount_paise": amount_paise,
         "currency": "INR", "razorpay_order_id": razorpay_order_id, "status": "created",
         "mock_payment": mock,
@@ -1148,6 +1330,110 @@ async def mock_pay(order_id: str, user: dict = Depends(get_current_user)):
 async def admin_list_orders(admin: dict = Depends(require_admin)):
     orders = await db.orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return orders
+
+
+@api_router.get("/admin/analytics")
+async def admin_analytics(admin: dict = Depends(require_admin)):
+    """Aggregate dashboard for the admin panel:
+    - Totals: users, products, orders, revenue (paid+shipped+delivered)
+    - Orders by status (breakdown)
+    - Top 5 selling products by units sold in paid+shipped+delivered orders
+    - Low-stock items (products with stock < 5 if the `stock` field is set)
+    - Recent orders (last 5)
+    - Last 30 days revenue by day
+    """
+    from collections import defaultdict
+
+    # Totals
+    total_users = await db.users.count_documents({})
+    total_products = await db.products.count_documents({})
+    total_orders = await db.orders.count_documents({})
+
+    # Orders by status
+    status_pipeline = [
+        {"$group": {"_id": "$status", "count": {"$sum": 1}, "revenue": {"$sum": "$amount"}}},
+    ]
+    by_status_rows = await db.orders.aggregate(status_pipeline).to_list(20)
+    by_status = {r["_id"]: {"count": r["count"], "revenue": round(r.get("revenue", 0) or 0, 2)} for r in by_status_rows}
+
+    paid_statuses = {"paid", "shipped", "delivered"}
+    total_revenue = round(sum(v["revenue"] for k, v in by_status.items() if k in paid_statuses), 2)
+    paid_orders_count = sum(v["count"] for k, v in by_status.items() if k in paid_statuses)
+
+    # Top selling products (from paid+shipped+delivered orders)
+    top_pipeline = [
+        {"$match": {"status": {"$in": list(paid_statuses)}}},
+        {"$unwind": "$items"},
+        {
+            "$group": {
+                "_id": "$items.product_id",
+                "name": {"$first": "$items.name"},
+                "image": {"$first": "$items.image"},
+                "units_sold": {"$sum": "$items.quantity"},
+                "revenue": {"$sum": {"$multiply": ["$items.price", "$items.quantity"]}},
+            }
+        },
+        {"$sort": {"units_sold": -1}},
+        {"$limit": 5},
+    ]
+    top_products = [
+        {
+            "product_id": r["_id"],
+            "name": r.get("name"),
+            "image": r.get("image"),
+            "units_sold": int(r.get("units_sold", 0)),
+            "revenue": round(r.get("revenue", 0) or 0, 2),
+        }
+        for r in await db.orders.aggregate(top_pipeline).to_list(5)
+    ]
+
+    # Low stock (only for products that have a `stock` numeric field)
+    low_stock = await db.products.find(
+        {"stock": {"$exists": True, "$type": "number", "$lt": 5}},
+        {"_id": 0, "id": 1, "name": 1, "stock": 1, "image": 1, "images": 1},
+    ).sort("stock", 1).to_list(20)
+    # Normalise image field
+    for p in low_stock:
+        if not p.get("image"):
+            p["image"] = (p.get("images") or [""])[0] if isinstance(p.get("images"), list) else ""
+        p.pop("images", None)
+
+    # Recent 5 orders
+    recent = await db.orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(5)
+
+    # Last 30 days revenue by day
+    from datetime import timedelta as _td
+    since = (datetime.now(timezone.utc) - _td(days=30)).isoformat()
+    trend_pipeline = [
+        {"$match": {"status": {"$in": list(paid_statuses)}, "created_at": {"$gte": since}}},
+        {
+            "$group": {
+                "_id": {"$substrBytes": ["$created_at", 0, 10]},
+                "revenue": {"$sum": "$amount"},
+                "orders": {"$sum": 1},
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+    trend = [
+        {"date": r["_id"], "revenue": round(r.get("revenue", 0) or 0, 2), "orders": int(r["orders"])}
+        for r in await db.orders.aggregate(trend_pipeline).to_list(60)
+    ]
+
+    return {
+        "totals": {
+            "users": total_users,
+            "products": total_products,
+            "orders": total_orders,
+            "paid_orders": paid_orders_count,
+            "revenue": total_revenue,
+        },
+        "orders_by_status": by_status,
+        "top_products": top_products,
+        "low_stock": low_stock,
+        "recent_orders": recent,
+        "revenue_trend_30d": trend,
+    }
 
 
 @api_router.put("/admin/orders/{order_id}/status")

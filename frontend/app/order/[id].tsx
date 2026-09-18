@@ -4,7 +4,7 @@ import { Image } from "expo-image";
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { colors, radius, spacing, type } from "@/src/theme";
+import { colors, radius, spacing } from "@/src/theme";
 import { api } from "@/src/api/client";
 
 type OrderItem = { product_id: string; name: string; image: string; price: number; quantity: number };
@@ -19,7 +19,7 @@ type Order = {
 const FLOW = ["created", "paid", "shipped", "delivered"] as const;
 const LABEL: Record<string, { title: string; desc: string; icon: keyof typeof Feather.glyphMap }> = {
   created: { title: "Order Placed", desc: "We received your order", icon: "shopping-bag" },
-  paid: { title: "Payment Confirmed", desc: "Thank you — we're prepping your order", icon: "check-circle" },
+  paid: { title: "Payment Received", desc: "Thank you — we're prepping your order", icon: "check-circle" },
   shipped: { title: "On the Way", desc: "Your parcel is with the courier", icon: "truck" },
   delivered: { title: "Delivered", desc: "Enjoy your new pieces ✨", icon: "home" },
   cancelled: { title: "Cancelled", desc: "This order was cancelled", icon: "x-circle" },

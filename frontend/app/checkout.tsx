@@ -25,9 +25,16 @@ export default function Checkout() {
   const [pointsBalance, setPointsBalance] = useState(0);
   const [pointsRedeemValue, setPointsRedeemValue] = useState(0.1);
   const [applyPoints, setApplyPoints] = useState(false);
+  const [couponInput, setCouponInput] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discount: number } | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
+  const [couponErr, setCouponErr] = useState<string | null>(null);
+  const [giftWrap, setGiftWrap] = useState(false);
+  const [giftNote, setGiftNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const [iframeReady, setIframeReady] = useState(false);
   const [activeOrder, setActiveOrder] = useState<any>(null);
   const [mock, setMock] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -44,12 +51,40 @@ export default function Checkout() {
     })();
   }, [user]);
 
-  const gross = subtotal + shipping;
-  // Cap redemption at 30% of total
-  const maxRedeemPoints = Math.min(pointsBalance, Math.floor((gross * 0.3) / pointsRedeemValue));
+  const GIFT_WRAP_FEE = 49;
+  const couponDiscount = appliedCoupon?.discount || 0;
+  const subAfterCoupon = Math.max(0, subtotal - couponDiscount);
+  const grossBase = subAfterCoupon + shipping + (giftWrap ? GIFT_WRAP_FEE : 0);
+  // Cap redemption at 30% of subtotal-after-coupon
+  const maxRedeemPoints = Math.min(pointsBalance, Math.floor((subAfterCoupon * 0.3) / pointsRedeemValue));
   const pointsToRedeem = applyPoints ? maxRedeemPoints : 0;
-  const discount = pointsToRedeem * pointsRedeemValue;
-  const total = Math.max(0, gross - discount);
+  const pointsDiscount = pointsToRedeem * pointsRedeemValue;
+  const total = Math.max(0, grossBase - pointsDiscount);
+
+  const applyCoupon = async () => {
+    const code = couponInput.trim().toUpperCase();
+    if (!code) return;
+    setCouponBusy(true);
+    setCouponErr(null);
+    try {
+      const r = await api<{ code: string; discount: number }>("/coupons/apply", {
+        method: "POST",
+        auth: true,
+        body: { code, subtotal },
+      });
+      setAppliedCoupon({ code: r.code, discount: r.discount });
+      setCouponInput("");
+    } catch (e: any) {
+      setCouponErr(e?.message || "Invalid coupon");
+    } finally {
+      setCouponBusy(false);
+    }
+  };
+
+  const removeCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponErr(null);
+  };
 
   const startPayment = async () => {
     setErr(null);
@@ -66,11 +101,15 @@ export default function Checkout() {
           shipping_name: name,
           shipping_phone: phone,
           points_to_redeem: pointsToRedeem,
+          coupon_code: appliedCoupon?.code || "",
+          gift_wrap: giftWrap,
+          gift_note: giftWrap ? giftNote.trim() : "",
         },
       });
       setActiveOrder(r.order);
       setMock(r.mock);
       if (!r.mock) {
+        setIframeReady(false);
         setCheckoutUrl(r.checkout_url);
       }
     } catch (e: any) {
@@ -178,11 +217,82 @@ export default function Checkout() {
               </View>
             ))}
           </View>
+
+          {/* Coupon */}
+          <View style={styles.blockBox}>
+            <Text style={styles.blockTitle}>Coupon Code</Text>
+            {appliedCoupon ? (
+              <View style={styles.appliedCouponRow} testID="applied-coupon-box">
+                <Feather name="tag" size={16} color={colors.brandDark} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.appliedCouponCode}>{appliedCoupon.code}</Text>
+                  <Text style={styles.appliedCouponSub}>Saves ₹{appliedCoupon.discount.toLocaleString("en-IN")}</Text>
+                </View>
+                <Pressable testID="remove-coupon-btn" onPress={removeCoupon} hitSlop={12}>
+                  <Feather name="x" size={18} color={colors.mutedText} />
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.couponRow}>
+                <TextInput
+                  testID="coupon-input"
+                  style={[styles.input, { flex: 1 }]}
+                  placeholder="Enter code"
+                  placeholderTextColor={colors.mutedText}
+                  value={couponInput}
+                  onChangeText={(t) => setCouponInput(t.toUpperCase())}
+                  autoCapitalize="characters"
+                />
+                <Pressable
+                  testID="apply-coupon-btn"
+                  style={[styles.couponBtn, (!couponInput || couponBusy) && { opacity: 0.5 }]}
+                  onPress={applyCoupon}
+                  disabled={!couponInput || couponBusy}
+                >
+                  {couponBusy ? <ActivityIndicator color={colors.onSurfaceInverse} size="small" /> : <Text style={styles.couponBtnText}>Apply</Text>}
+                </Pressable>
+              </View>
+            )}
+            {couponErr && <Text style={styles.smallErr} testID="coupon-error">{couponErr}</Text>}
+          </View>
+
+          {/* Gift Wrap */}
+          <View style={styles.blockBox}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.blockTitle}>Gift Wrap  · ₹{GIFT_WRAP_FEE}</Text>
+                <Text style={styles.blockSub}>Add a handwritten-style note; premium recycled paper.</Text>
+              </View>
+              <Switch
+                testID="gift-wrap-switch"
+                value={giftWrap}
+                onValueChange={setGiftWrap}
+                trackColor={{ true: colors.brand, false: colors.border }}
+              />
+            </View>
+            {giftWrap && (
+              <TextInput
+                testID="gift-note-input"
+                style={[styles.input, { minHeight: 80, marginTop: spacing.md }]}
+                placeholder="Add a message (optional, max 240 chars)"
+                placeholderTextColor={colors.mutedText}
+                value={giftNote}
+                onChangeText={(t) => setGiftNote(t.slice(0, 240))}
+                multiline
+                numberOfLines={3}
+              />
+            )}
+          </View>
+
           <View style={styles.totalBox}>
             <Row label="Subtotal" value={`₹${subtotal.toLocaleString("en-IN")}`} />
+            {appliedCoupon && (
+              <Row label={`Coupon (${appliedCoupon.code})`} value={`-₹${appliedCoupon.discount.toLocaleString("en-IN")}`} />
+            )}
             <Row label="Shipping" value={shipping === 0 ? "Free" : `₹${shipping}`} />
+            {giftWrap && <Row label="Gift Wrap" value={`₹${GIFT_WRAP_FEE}`} />}
             {pointsToRedeem > 0 && (
-              <Row label={`Nest Points (-${pointsToRedeem} pts)`} value={`-₹${discount.toLocaleString("en-IN")}`} />
+              <Row label={`Nest Points (-${pointsToRedeem} pts)`} value={`-₹${pointsDiscount.toLocaleString("en-IN")}`} />
             )}
             <View style={styles.dividerLine} />
             <Row label="Total" value={`₹${total.toLocaleString("en-IN")}`} big />
@@ -193,7 +303,7 @@ export default function Checkout() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.pointsToggleTitle}>Use Nest Points</Text>
                 <Text style={styles.pointsToggleSub}>
-                  You have {pointsBalance.toLocaleString("en-IN")} pts. {maxRedeemPoints > 0 ? `Apply ${maxRedeemPoints} pts (₹${discount.toLocaleString("en-IN")}) on this order.` : `Add more items to unlock redemption.`}
+                  You have {pointsBalance.toLocaleString("en-IN")} pts. {maxRedeemPoints > 0 ? `Apply ${maxRedeemPoints} pts (₹${pointsDiscount.toLocaleString("en-IN")}) on this order.` : `Add more items to unlock redemption.`}
                 </Text>
               </View>
               <Switch
@@ -237,12 +347,21 @@ export default function Checkout() {
           {checkoutUrl && Platform.OS === "web" ? (
             <>
               {/* On web, react-native-webview is a stub. Use an iframe. */}
-              {/* @ts-ignore - iframe is valid DOM in RN-web */}
-              <iframe
-                src={checkoutUrl}
-                style={{ flex: 1, border: 0, width: "100%", height: "100%" } as any}
-                title="Razorpay Checkout"
-              />
+              <View style={{ flex: 1, position: "relative" }}>
+                {/* @ts-ignore - iframe is valid DOM in RN-web */}
+                <iframe
+                  src={checkoutUrl}
+                  onLoad={() => setIframeReady(true)}
+                  style={{ flex: 1, border: 0, width: "100%", height: "100%" } as any}
+                  title="Razorpay Checkout"
+                />
+                {!iframeReady && (
+                  <View style={styles.iframeLoader} testID="iframe-loader">
+                    <ActivityIndicator size="large" color={colors.brandDark} />
+                    <Text style={styles.iframeLoaderText}>Loading secure checkout…</Text>
+                  </View>
+                )}
+              </View>
               <View style={styles.footer}>
                 <Text style={styles.mockNote}>
                   After paying in the window above, tap the button below to verify.
@@ -313,6 +432,16 @@ const styles = StyleSheet.create({
   totalBox: { marginTop: spacing.sm, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg },
   dividerLine: { height: 1, backgroundColor: colors.divider, marginVertical: spacing.sm },
   err: { fontFamily: "DMSans", color: colors.error, backgroundColor: "#F9EDEC", padding: spacing.md, borderRadius: radius.lg },
+  smallErr: { fontFamily: "DMSans", color: colors.error, fontSize: 12, marginTop: spacing.sm },
+  blockBox: { padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, gap: spacing.sm },
+  blockTitle: { fontFamily: "DMSansBold", fontSize: 14, color: colors.onSurface, letterSpacing: 0.3 },
+  blockSub: { fontFamily: "DMSans", fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 2, lineHeight: 15 },
+  couponRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm },
+  couponBtn: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, backgroundColor: colors.onSurface, borderRadius: radius.pill },
+  couponBtnText: { color: colors.onSurfaceInverse, fontFamily: "DMSansBold", fontSize: 12, letterSpacing: 1, textTransform: "uppercase" },
+  appliedCouponRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.brandLight, paddingHorizontal: spacing.md, paddingVertical: spacing.md, borderRadius: radius.md, marginTop: spacing.sm },
+  appliedCouponCode: { fontFamily: "DMSansBold", fontSize: 13, color: colors.brandDark, letterSpacing: 0.5 },
+  appliedCouponSub: { fontFamily: "DMSans", fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 1 },
   pointsToggleBox: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.lg, backgroundColor: colors.brandLight, borderRadius: radius.md, marginTop: spacing.sm },
   pointsToggleTitle: { fontFamily: "DMSansBold", fontSize: 14, color: colors.brandDark },
   pointsToggleSub: { fontFamily: "DMSans", fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 2, lineHeight: 16 },
@@ -330,6 +459,11 @@ const styles = StyleSheet.create({
   },
   payText: { color: colors.onSurfaceInverse, fontFamily: "DMSansBold", letterSpacing: 1.5, textTransform: "uppercase", fontSize: 14 },
   mockNote: { fontFamily: "DMSans", fontSize: 12, color: colors.mutedText, textAlign: "center" },
+  iframeLoader: {
+    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", gap: spacing.md,
+  },
+  iframeLoaderText: { fontFamily: "DMSansMedium", fontSize: 13, color: colors.onSurfaceSecondary, letterSpacing: 0.5 },
   successWrap: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md },
   tick: { width: 72, height: 72, borderRadius: 36, backgroundColor: colors.onSurface, alignItems: "center", justifyContent: "center", marginBottom: spacing.md },
   successTitle: { ...type.displayLG },
