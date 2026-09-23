@@ -138,7 +138,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Expo SDK 54 → 57 upgrade regression"
+    - "Admin Panel Phase 2 — Inventory, Customers, Reviews, Promotions"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -146,24 +146,42 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Expo SDK upgraded 54 → 57. Please regression-test the app on web preview http://localhost:3000.
+      Admin Panel Phase 2 built. Four new admin sections added + backend endpoints.
 
-      Migration changes:
-      - expo 54.0.36 → 57.0.24 (+ every expo-* + react/react-native/react-native-web bumped via `expo install --fix`)
-      - app.json: removed `newArchEnabled` and `edgeToEdgeEnabled` (deprecated in SDK 55)
-      - @expo/vector-icons removed → replaced with @react-native-vector-icons/feather across ALL 23 screens (only Feather is used); imports rewritten from `import { Feather } from "@expo/vector-icons"` to `import Feather from "@react-native-vector-icons/feather"`.
-      - src/hooks/use-icon-fonts.ts CDN URL updated to load Feather.ttf from @react-native-vector-icons/feather@13.1.4 on Expo Go.
-      - expo-doctor: 20/20 checks pass. Metro bundles cleanly, app loads.
+      NEW BACKEND ENDPOINTS (all admin-only in /app/backend/server.py):
+      - PATCH /api/admin/products/{product_id}/stock   body: {stock: int>=0}
+      - GET   /api/admin/customers                     → users with orders_count, total_spent (paid+shipped+delivered), last_order_at
+      - GET   /api/admin/customers/{customer_id}       → user + orders + orders_count + total_spent + points_balance
+      - GET   /api/admin/reviews                       → all reviews hydrated with product_name/product_image
+      - DELETE /api/admin/reviews/{review_id}          → deletes + recomputes product's avg_rating and reviews_count
 
-      Please verify:
-      1. Onboarding + Sign in + Sign up screens render, icons visible (Feather back-arrow, etc.).
-      2. Home tab loads with product cards, category tiles, category images, brand logo.
-      3. Product detail page opens; can add to cart; wishlist toggle works.
-      4. Cart tab shows items; Proceed to Checkout button visible.
-      5. Checkout screen: shipping fields, order summary, points toggle, and NEW coupon + gift wrap sections all render (mid-flight from prior iteration). Do NOT test end-to-end payment for this iteration — just render + navigation.
-      6. Profile tab: shows Sign Out and Delete Account buttons; icons visible.
-      7. Admin tab (login as admin@garlic.app / Admin@123): admin panel loads.
-      8. No red-box errors or missing-icon glyphs anywhere.
+      NEW FRONTEND ROUTES:
+      - /admin/inventory     — search + 4 filters (All/Low/Out/In), quick +/- stepper per product, dirty state, SAVE pill
+      - /admin/customers     — search, list cards with initials avatar, orders_count + total_spent badges, last order date
+      - /admin/customer/[id] — profile card with Call/Email actions, contact card, 3 stat cards (Orders/Total/Points), orders list
+      - /admin/reviews       — search + 6 rating filters (All/★5/★4/★3/★1-2/Photos), review cards with stars, product tap → product edit, photos row, delete with confirm
+      - /admin/promotions    — coupon list + FAB (+), each card shows discount summary/min-order/expiry/active badge; delete with confirm. Bottom-sheet form for creating coupons (code, percent/flat toggle, value, min_order, max_discount for percent, expires_at, active switch)
 
-      Backend was NOT changed in this iteration — no backend testing needed.
-      Report to /app/test_reports/iteration_11.json.
+      MORE MENU wired up — Inventory/Customers/Reviews/Promotions now link to real screens instead of "Coming soon".
+
+      Please regression + verify (viewport 390x844):
+
+      BACKEND
+      B1. Login as admin (admin@garlic.app / Admin@123). Hit each new endpoint via the app:
+        - GET /api/admin/customers → 200, array of customers, each has `orders_count` and `total_spent` numeric.
+        - GET /api/admin/customers/{customer_id} for any customer → 200, has `user`, `orders`, `orders_count`, `total_spent`, `points_balance`.
+        - GET /api/admin/reviews → 200 array (may be empty). Any items should have `product_name` and `product_image` fields (hydrated).
+        - PATCH /api/admin/products/{product_id}/stock with body {stock: 42} → 200, returns product with new stock.
+        - PATCH with body {stock: -1} → 400 "Stock cannot be negative".
+        - DELETE /api/admin/reviews/{review_id} for a real review id → 200; product's avg_rating recomputes.
+      B2. Auth check: same endpoints hit without admin token → 401 or 403.
+
+      FRONTEND
+      F1. Login as admin → dashboard. Tap More tab.
+      F2. Tap "Inventory" row → screen loads with product list. Filter "Low Stock" applies. Search "cushion" filters. Tap + or − on a stepper — the SAVE pill appears next to that row. Tap SAVE → row updates, badge changes. Screenshot.
+      F3. Back → tap "Customers" → list loads. Tap first customer → detail loads with initials avatar, contact rows, 3 stat cards, orders list. Tap Call → on web should show alert; on native it would open dialer. Screenshot.
+      F4. Back → tap "Reviews" → list loads (may be empty). If present, tap a review's product row → navigates to `/admin/product/[id]`. Back → tap Delete on a review → confirmation → confirmed → item disappears. Screenshot.
+      F5. Back → tap "Promotions" → list loads (may be empty). Tap + → form sheet opens. Fill code "PHASE2", pick "% Percent", value 10, min_order 500, max_discount 200, active on. Tap Activate → sheet closes, "PHASE2" appears in list with "Active" badge. Tap Delete → confirm → row disappears. Screenshot.
+      F6. Regression: dashboard still renders, orders tab still renders, product editor still saves. Bottom tab bar still shows exactly 4 tabs (Dashboard/Orders/Products/More) — no new tabs leaked.
+
+      Please report to /app/test_reports/iteration_14.json.

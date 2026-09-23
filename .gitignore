@@ -80,9 +80,10 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/
-.env
-.env.*
-*.env
+# Note: .env files are required by the Emergent deploy pipeline and must NOT be ignored.
 credentials.json
 *.key
 .credentials
+.env
+.env.*
+*.env

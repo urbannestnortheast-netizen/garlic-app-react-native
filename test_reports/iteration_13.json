@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 13 FRONTEND retest of the three iteration-12 bug fixes on the Warm-ivory Admin Panel — ALL 3 PASS. (1) Extra 'index' tab is gone: bottom-tab bar now renders exactly 4 tabs with labels ['Dashboard','Orders','Products','More options'] (role='tab' count = 4). Verified by DOM query and screenshot /tmp/it13_02_dashboard.png. (2) Nested <button> hydration error on /admin/products is eliminated: 0 console messages matching 'cannot contain' / 'validateDOMNesting' across the entire authenticated session (login → products → edit → new product → publish → delete). No red 'Console Error' toast on-screen. Screenshot /tmp/it13_03_products.png. Product card is now <View> with a nested <Pressable> (cardTap) plus a sibling <Pressable data-testid='product-more-<id>'> for the more-actions icon — confirmed by inspecting /app/frontend/app/admin/products.tsx:164-211 and running DOM query which lists product-more-<id> testIDs correctly. (3) After Publish on a new product ('Retest Bowl', ₹199, stock 5), URL becomes http://localhost:3000/admin/products (NOT /admin/dashboard) and the new item appears at index 0 (top) of the list with 45 total items — verified by DOM scan and screenshot /tmp/it13_08_list.png. Long-press/tap on the new product's product-more-<id> opens the bottom sheet with Edit / Delete (screenshot /tmp/it13_09_sheet.png); tapping Delete triggers a window.confirm which is auto-accepted, and Retest Bowl is removed (still-visible=False, count back to 44). Card-body tap navigates to /admin/product/<id> edit form (screenshot /tmp/it13_04_edit.png); Publish button correctly carries testID='save-product-btn'. Regression pass: /admin/dashboard, /admin/orders, /admin/more, and /admin/order/<id> detail all render (innerText lengths 721 / 2692 / 676 respectively; order detail shows ORDER TOTAL, ORDER STATUS timeline, CUSTOMER, DELIVERY, MARK PAID sticky button). Storefront regression not re-run this iteration since no customer-facing code changed between it12 and it13 — the admin theme fixes are isolated to /app/frontend/app/admin/*. Only console noise: 7 image 404s (pre-existing, cosmetic, same as it12). No React Native red-screen errors. Deprecated packages / SafeAreaView / react-native-vector-icons issues: none newly introduced.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/tmp/it13_01_login.png",
+    "/tmp/it13_02_dashboard.png",
+    "/tmp/it13_03_products.png",
+    "/tmp/it13_04_edit.png",
+    "/tmp/it13_05_sheet.png",
+    "/tmp/it13_06_form.png",
+    "/tmp/it13_07_after_pub.png",
+    "/tmp/it13_08_list.png",
+    "/tmp/it13_09_sheet.png",
+    "/tmp/it13_10_after_del.png",
+    "/tmp/it13_11_more.png",
+    "/tmp/it13_12_order_detail.png"
+  ],
+  "action_items": [
+    "NONE for the three iteration-12 bugs — all fixed. Optional low-priority carry-over from it12: (a) attach explicit tab-<name> testIDs to the four admin bottom-tab items to make future Playwright tab-selection more deterministic (aria-label works but tab labels are locale strings); (b) also add save-product-btn is already present — same testID could be added to the Cancel button on the editor sticky footer; (c) the pre-existing image 404s in expo web preview are cosmetic and can be ignored."
+  ],
+  "critical_code_review_comments": [
+    "app/admin/_layout.tsx:90 — `<Tabs.Screen name='index' options={{ href: null }} />` is placed correctly in the hidden-routes group alongside order/[id], product/[id], product/new. Good.",
+    "app/admin/products.tsx:164-211 — The refactor is clean: outer wrapper is `<View style={styles.card}>` (flex-row card), inner `<Pressable style={styles.cardTap}>` (line 165) handles the primary tap → router.push(`/admin/product/${p.id}`), and a **sibling** (not nested) `<Pressable testID={`product-more-${p.id}`} style={styles.moreBtn}>` (line 201) opens the bottom sheet. On react-native-web this compiles to `<div><button (cardTap)>…</button><button (more)>…</button></div>` — DOM-valid. Verified 0 validateDOMNesting warnings at runtime.",
+    "src/admin/product-editor.tsx:150-156 — On create → `router.replace('/admin/products')`; on edit → `router.back()`. Matches the review request exactly. `router.replace` (not push) ensures the user cannot swipe/back-nav back into the new-product form after saving.",
+    "app/admin/products.tsx:202 — `testID={`product-more-${p.id}`}` is present on the sibling more-actions Pressable, as requested. Confirmed queryable from Playwright: 44→45 testIDs matched on the products screen depending on catalog state.",
+    "app/admin/products.tsx:70-78 — Delete uses `window.confirm` on web / `Alert.alert` on native. Playwright dialog auto-accept handled the confirm cleanly.",
+    "Login form (auth/login) — The 'SIGN IN' button text is uppercase visually via CSS text-transform but DOM textContent is 'Sign in' (mixed case). A previous test-agent selector using get_by_text('Sign in') collides with the 'Sign in to continue your nesting.' subhead text; recommend adding testID='login-submit-btn' for future retests. Non-blocking."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "NOT TESTED (frontend-only retest per review request)",
+    "frontend": "3/3 targeted bug fixes PASS + full happy-path (login → 4-tab bar → products list clean → card tap → more sheet → add → publish → redirect → delete) + regression on dashboard/orders/order-detail/more all PASS."
+  },
+  "seed_data_creation": "One product created ('Retest Bowl', category=Kitchen, price=₹199, stock=5) and deleted within the same run; net-zero change to seed catalog (44 → 45 → 44 items).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All three iteration-12 bugs are fully closed. If retesting the admin panel again: (a) Login by mouse-clicking coordinates (195, 393) at 390x844 viewport works reliably since the 'SIGN IN' AdminButton is a role='button' <div> whose textContent is 'Sign in' (mixed case) — get_by_role(name='sign in') fails because RN-web renders it as div. Consider adding testID='login-submit-btn' to unblock future selectors. (b) Publish button on new-product form is discoverable via `[data-testid='save-product-btn']` (role=button, textContent contains an icon glyph char + 'Publish' — case-insensitive `.includes('publish')` works). (c) Bottom sheet Delete/Edit buttons are queryable via `[aria-label='Delete product']` / `[aria-label='Edit product']`. (d) The window.confirm delete dialog on web auto-accepts via `page.on('dialog', d.accept())` set before the click. (e) Product cards use testID='product-more-<uuid>' on the sibling more-actions icon (not on the card body).",
+  "rca_of_issue": "N/A — all three bugs from iteration 12 are fixed. Root causes were: (1) missing `<Tabs.Screen name='index' options={{ href: null }}/>` in admin/_layout.tsx which auto-registered the /admin/index redirect route as a 5th tab, (2) nested <Pressable> inside <Pressable> on the products card which produced nested `<button role='button'>` on react-native-web and tripped React's DOM-validation warning, (3) new-product editor previously called `router.back()` regardless of edit vs create, so a create action navigated back to the dashboard (the previous screen when opened from + button). All three are addressed with minimal, targeted changes and verified working."
+}

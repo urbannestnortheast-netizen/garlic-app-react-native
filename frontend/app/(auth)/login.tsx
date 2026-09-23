@@ -11,7 +11,7 @@ import { useAuth } from "@/src/context/AuthContext";
 
 export default function Login() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, refresh } = useAuth();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -23,7 +23,14 @@ export default function Login() {
     setBusy(true);
     try {
       await login(identifier, password);
-      router.replace("/(tabs)");
+      await refresh();
+      // Route admins to the admin cockpit, everyone else to the storefront
+      const me = await import("@/src/api/client").then((m) => m.api<{ role?: string }>("/auth/me", { auth: true }).catch(() => null));
+      if (me?.role === "admin") {
+        router.replace("/admin");
+      } else {
+        router.replace("/(tabs)");
+      }
     } catch (e: any) {
       setErr(e.message || "Login failed");
     } finally {

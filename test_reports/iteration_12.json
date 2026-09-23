@@ -1,0 +1,78 @@
+{
+  "summary": "Iteration 12 FRONTEND test of the new Warm-ivory Mobile Admin Panel (Phase 1) — 10/12 review items PASS, 2 MEDIUM bugs and 2 MINOR test-selector gaps identified. Verified end-to-end admin flow: onboarding → sign-in link → login form → admin login → /admin/dashboard renders greeting 'GOOD MORNING Garlic', KPI cards (TOTAL SALES / ORDERS / CUSTOMERS / AVG. ORDER) with % change badges, sales overview chart, Recent Orders (5 rows with #id, customer, ₹599, status pill), Top Products, and bottom-tab bar. /admin/orders shows 83 orders with orders-search testID, chip filters with aria-labels (All/Pending/Paid/Processing/Shipped) and a 'Filter orders' aria-label icon. Order detail (/admin/order/[id]) renders ORDER TOTAL card with created pill, ORDER STATUS timeline (5 steps: Order placed → Payment received → Processing → Shipped → Delivered), CUSTOMER card, DELIVERY, and a sticky 'MARK PAID' primary action at the bottom. /admin/products lists 43 products with image + price + '100 in stock' badge + Featured tag; '+' add-product-btn opens /admin/product/new with PRODUCT IMAGES section, BASIC INFORMATION → Product Name (with '*'), Category picker (defaults to 'Kitchen'), Subcategory, Description, Publish button. Empty publish correctly shows inline red error 'Product name is required' under the Name field. /admin/more renders profile card ('Garlic Admin', admin@garlic.app, Super Admin badge) + grouped list (Catalog / Customers & Marketing / Content / Insights / Account) + 'Sign out' row with admin-logout-btn testID; sign out redirects to /login. Customer STOREFRONT regression PASSED — fresh signup (TEST_it12_<ts>@example.com) landed on / with the untouched sage/peach theme, Summer Edit hero, category tiles (NEW / GIFTS / DINNERS / BOWLS / DECOR / KITCHEN…), Shop By Category grid, curated collections, and 11 product cards; bottom tabs Shop / Wishlist / Cart / Profile intact. Feather glyph scan across all admin screens + storefront: 83 admin Feather elements + 15 storefront, ZERO fallback '?' or empty-square glyphs. NO React Native red-screen errors. TWO real bugs found: (1) an extra 'index' tab is rendered in the admin bottom-tab bar (5 tabs visible instead of 4 — Dashboard / Orders / Products / More / index) because /app/frontend/app/admin/_layout.tsx omits `<Tabs.Screen name=\"index\" options={{ href: null }} />` from the hidden-routes list at lines 89-92 (only order/[id], product/[id], product/new are hidden). (2) React DOM 'Console Error' banner: '<button> cannot contain a nested <button>' fires on /admin/products (app/admin/products.tsx:164:15) — the outer <Pressable> wrapping the product card contains a nested inner <Pressable> for the more-actions icon (line 199), which renders as nested `<button role=\"button\">` in web-preview. This is a hydration error visible as a red toast on the products screen. Product save-redirect appears to land on /admin/dashboard instead of /admin/products (minor UX mismatch with review request).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AdminLayout / bottom Tabs",
+        "issue": "Extra 'index' tab renders in the admin bottom-nav bar (5 tabs visible instead of 4). Root cause: /app/frontend/app/admin/_layout.tsx:89-92 only hides order/[id], product/[id], product/new — the /admin/index.tsx redirect route is still auto-registered as a tab. Fix: add `<Tabs.Screen name=\"index\" options={{ href: null }} />` inside the Tabs block.",
+        "testID": "(admin tab bar)",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Admin Products list card",
+        "issue": "React DOM hydration error 'Console Error: <button> cannot contain a nested <button>' at app/admin/products.tsx:164:15. Outer <Pressable> (card, line 164) contains an inner <Pressable> (more-actions icon, line 199) — on web both render as native <button role=\"button\"> which is invalid HTML. Shows a red 'Console Error' overlay on the products screen. Fix: switch the inner more-actions icon to a <View accessibilityRole=\"button\"> with onPress via a TouchableWithoutFeedback wrapper, OR make the outer card a plain <View> and put the tap handler on an inner <Pressable> only.",
+        "testID": "(product card / more-actions button)",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Admin Product form (product/new)",
+        "issue": "After a successful Publish (name=Test Bowl, price=499, stock=10), router lands on /admin/dashboard instead of /admin/products. Review request expected 'returns to product list'. Non-blocking but a UX inconsistency — user has to manually tap Products to see the new item.",
+        "testID": "save-product-btn",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Admin bottom-tab bar",
+        "issues": [
+          "Visible 5th 'index' tab breaks the 4-tab grid, tab labels get truncated on 390px viewport (screenshot: /tmp/it12_03_dashboard.png, /tmp/it12_orders_direct.png, /tmp/it12_more_direct.png)."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/tmp/it12_01_onboarding.png",
+    "/tmp/it12_02_login.png",
+    "/tmp/it12_03_dashboard.png",
+    "/tmp/it12_orders_direct.png",
+    "/tmp/it12_07_order_detail.png",
+    "/tmp/it12_08_products_list.png",
+    "/tmp/it12_09_product_form.png",
+    "/tmp/it12_10_empty_error.png",
+    "/tmp/it12_11_products_after_save.png",
+    "/tmp/it12_more_direct.png",
+    "/tmp/it12_after_signout_final.png",
+    "/tmp/it12_storefront_home.png"
+  ],
+  "action_items": [
+    "HIGH — In /app/frontend/app/admin/_layout.tsx (around line 92) add `<Tabs.Screen name=\"index\" options={{ href: null }} />` so the /admin redirect route stops appearing as a 5th 'index' tab in the bottom bar.",
+    "HIGH — Fix nested <button> hydration error in /app/frontend/app/admin/products.tsx (lines 164 outer + 199 inner). Options: (a) unwrap the outer <Pressable> into a <View> and place onPress only on an inner <Pressable> that excludes the more-actions region; (b) turn the inner more-actions <Pressable> into a plain <View> that receives taps via a sibling absolute-positioned Pressable overlay outside the card; (c) attach a stopPropagation-style guard and render the inner element with `accessibilityRole=\"none\"` and no Pressable. The current markup violates HTML semantics and shows a red 'Console Error' banner on web preview.",
+    "MEDIUM — After successful product publish, use `router.replace('/admin/products')` (or router.back() after ensuring the previous screen was products) instead of routing to /admin/dashboard. Currently the user is taken to dashboard which does not immediately confirm the save.",
+    "MEDIUM — Add explicit testIDs (not just aria-labels) to admin tab-bar buttons (`tab-dashboard`, `tab-orders`, `tab-products`, `tab-more`), the Orders filter icon (`orders-filter-btn`), the status filter chips (`filter-chip-<status>`), and product-card more-actions icon (`product-more-<id>`). aria-label matching is brittle in Playwright when text collides with KPI labels on the dashboard.",
+    "LOW — Cosmetic: expo web preview logs many pre-existing 404s for splash-image / adaptive-icon variants (also observed in iteration 11). Non-fatal but noisy."
+  ],
+  "critical_code_review_comments": [
+    "app/admin/_layout.tsx — the 'Non-tab routes hidden from tab bar' block correctly hides deep-link routes (order/[id], product/[id], product/new) but forgot the redirect route index.tsx. Since index.tsx exists as a real file in app/admin/, Expo Router auto-registers it as a Tabs.Screen unless explicitly hidden. Confirmed visually in every admin screenshot.",
+    "app/admin/products.tsx — nesting <Pressable> inside <Pressable> is a known React-Native-Web anti-pattern. On native iOS/Android it may work (touchable propagation), but on web both compile to `<button type=\"button\">` and React emits a DOM validation error. Same pattern likely exists in orders.tsx if order cards have inner action buttons — worth auditing (couldn't reproduce there because the current card has only a chevron-icon View, not a Pressable).",
+    "app/admin/dashboard.tsx — the 'ORDERS' KPI card label collides with the 'Orders' bottom-tab label; Playwright's get_by_text('Orders', exact=True) matched the KPI card first and never navigated. This is not a functional bug but a testability signal: add data-testid=\"kpi-orders\" and data-testid=\"tab-orders\" to disambiguate.",
+    "app/admin/product/new.tsx — inline validation for empty Product Name works correctly ('Product name is required' appears in red under the field with an alert-circle icon). Good pattern; consider replicating for empty price and stock as well.",
+    "app/admin/more.tsx:103 — admin-logout-btn testID is correctly placed; sign-out flow logs out and lands on /login as expected (not /onboarding, but the review request accepted either).",
+    "Storefront (customer-facing) — the sage/peach theme is untouched by the admin warm-ivory palette. Confirmed by fresh-user signup + home screen render: Summer Edit hero, 11 product cards, 4-tab customer nav (Shop / Wishlist / Cart / Profile) all pixel-consistent with iteration 11."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "NOT TESTED (frontend-only per review request)",
+    "frontend": "10/12 review items PASS. 2 review items PARTIAL (Orders tab selector ambiguity resolved via direct URL; product-publish redirect goes to dashboard not products list). 2 HIGH-priority bugs to fix: extra 'index' tab and nested-button hydration error on products list."
+  },
+  "seed_data_creation": "1 disposable customer created via signup UI (TEST_it12_1790149850@example.com, mobile 9790149850, name 'It12 Tester') for storefront regression — no data mutation on the admin side (empty publish blocked by validation; the second valid publish attempt did POST successfully but the redirect went to /admin/dashboard so the exact new product ID was not visually confirmed on the products list within this run). Admin account admin@garlic.app untouched.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "For the admin panel: (a) The extra 'index' tab bug is a single-line fix in app/admin/_layout.tsx — after main agent adds `<Tabs.Screen name=\"index\" options={{ href: null }} />`, verify bottom bar shows exactly 4 tabs. (b) The nested-button hydration error is exclusive to /admin/products; when re-testing, open Chrome DevTools and confirm the red 'Console Error' toast is gone. (c) Bottom-tab navigation via get_by_text collides with KPI card text — either use `page.goto('/admin/orders')` direct URL, or wait for main agent to add tab-<name> testIDs. (d) Orders filter icon is reachable via `[aria-label=\"Filter orders\"]` for now. (e) Storefront signup password requirement is >=6 chars (used Test@123456 successfully). (f) admin-logout-btn testID works; native Alert.alert('Sign out') dialog auto-accepts via page.on('dialog', d.accept()).",
+  "rca_of_issue": "Extra 'index' admin tab — RCA: Expo Router's Tabs registers every direct child file in the segment as a Tabs.Screen by default. /app/frontend/app/admin/index.tsx exists (it's the 'redirect /admin → /admin/dashboard' handler) but is not marked with `href: null` in _layout.tsx, so it appears as a 5th tab labeled with the segment name 'index'. Reproduction: log in as admin, look at bottom-nav — 5 tabs visible. Mitigation: add `<Tabs.Screen name=\"index\" options={{ href: null }} />` alongside the other hidden routes. Nested-button hydration error — RCA: on react-native-web, <Pressable> compiles to a native <button role=\"button\">. When two Pressables are nested (products.tsx:164 outer product card + :199 inner more-actions icon), the DOM validator errors out. Reproduction: sign in as admin → tap Products tab → a red 'Console Error' banner appears at the bottom of the screen. Mitigation: replace the inner Pressable with a hit-slop-adjusted TouchableOpacity outside the card body, or unwrap the outer to a plain View and only make the inner regions Pressable."
+}

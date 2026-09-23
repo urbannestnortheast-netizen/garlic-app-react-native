@@ -1471,6 +1471,131 @@ async def admin_update_status(order_id: str, data: OrderStatusIn, admin: dict = 
     return updated
 
 
+# =========================================================================
+# ADMIN — Phase 2 (Inventory / Customers / Reviews)
+# =========================================================================
+
+class StockAdjustIn(BaseModel):
+    stock: int
+
+
+@api_router.patch("/admin/products/{product_id}/stock")
+async def admin_adjust_stock(product_id: str, data: StockAdjustIn, admin: dict = Depends(require_admin)):
+    """Quick stock write for the Inventory screen."""
+    if data.stock < 0:
+        raise HTTPException(400, "Stock cannot be negative")
+    r = await db.products.find_one_and_update(
+        {"id": product_id},
+        {"$set": {"stock": int(data.stock)}},
+        return_document=True, projection={"_id": 0},
+    )
+    if not r:
+        raise HTTPException(404, "Product not found")
+    return r
+
+
+@api_router.get("/admin/customers")
+async def admin_list_customers(admin: dict = Depends(require_admin), limit: int = 500):
+    """List customers with aggregated order stats."""
+    pipeline = [
+        {"$match": {"role": {"$ne": "admin"}}},
+        {
+            "$lookup": {
+                "from": "orders",
+                "let": {"uid": "$id"},
+                "pipeline": [
+                    {"$match": {"$expr": {"$eq": ["$user_id", "$$uid"]}}},
+                    {"$project": {"_id": 0, "amount": 1, "status": 1, "created_at": 1}},
+                ],
+                "as": "orders",
+            }
+        },
+        {
+            "$addFields": {
+                "orders_count": {"$size": "$orders"},
+                "total_spent": {
+                    "$sum": {
+                        "$map": {
+                            "input": {
+                                "$filter": {
+                                    "input": "$orders",
+                                    "as": "o",
+                                    "cond": {"$in": ["$$o.status", ["paid", "shipped", "delivered"]]},
+                                }
+                            },
+                            "as": "o",
+                            "in": "$$o.amount",
+                        }
+                    }
+                },
+                "last_order_at": {"$max": "$orders.created_at"},
+            }
+        },
+        {"$sort": {"last_order_at": -1, "created_at": -1}},
+        {"$limit": max(1, min(limit, 500))},
+        {"$project": {"_id": 0, "password_hash": 0, "orders": 0}},
+    ]
+    return await db.users.aggregate(pipeline).to_list(500)
+
+
+@api_router.get("/admin/customers/{customer_id}")
+async def admin_customer_detail(customer_id: str, admin: dict = Depends(require_admin)):
+    """Customer detail: profile + all orders + points balance."""
+    user = await db.users.find_one({"id": customer_id}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(404, "Customer not found")
+    orders = (
+        await db.orders.find({"user_id": customer_id}, {"_id": 0})
+        .sort("created_at", -1)
+        .to_list(500)
+    )
+    balance = await _get_user_points_balance(customer_id)
+    total_spent = sum(o.get("amount", 0) for o in orders if o.get("status") in {"paid", "shipped", "delivered"})
+    return {
+        "user": user,
+        "orders": orders,
+        "orders_count": len(orders),
+        "total_spent": round(total_spent, 2),
+        "points_balance": balance,
+    }
+
+
+@api_router.get("/admin/reviews")
+async def admin_list_reviews(admin: dict = Depends(require_admin), limit: int = 500):
+    """All reviews with hydrated product name+image."""
+    reviews = await db.reviews.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    prod_ids = list({r.get("product_id") for r in reviews if r.get("product_id")})
+    products = await db.products.find({"id": {"$in": prod_ids}}, {"_id": 0, "id": 1, "name": 1, "images": 1}).to_list(500)
+    prod_map = {p["id"]: p for p in products}
+    for r in reviews:
+        p = prod_map.get(r.get("product_id"))
+        if p:
+            r["product_name"] = p.get("name")
+            r["product_image"] = (p.get("images") or [""])[0] if isinstance(p.get("images"), list) else ""
+    return reviews[:limit]
+
+
+@api_router.delete("/admin/reviews/{review_id}")
+async def admin_delete_review(review_id: str, admin: dict = Depends(require_admin)):
+    review = await db.reviews.find_one({"id": review_id}, {"_id": 0})
+    if not review:
+        raise HTTPException(404, "Review not found")
+    await db.reviews.delete_one({"id": review_id})
+    # Recompute product avg rating & count
+    product_id = review.get("product_id")
+    if product_id:
+        agg = await db.reviews.aggregate([
+            {"$match": {"product_id": product_id}},
+            {"$group": {"_id": None, "avg": {"$avg": "$rating"}, "count": {"$sum": 1}}},
+        ]).to_list(1)
+        avg = round(agg[0]["avg"], 2) if agg else 0
+        count = agg[0]["count"] if agg else 0
+        await db.products.update_one(
+            {"id": product_id}, {"$set": {"avg_rating": avg, "reviews_count": count}}
+        )
+    return {"ok": True}
+
+
 @api_router.get("/payments/checkout/{order_id}", response_class=HTMLResponse)
 async def hosted_checkout(order_id: str):
     order = await db.orders.find_one({"id": order_id}, {"_id": 0})
@@ -1589,6 +1714,12 @@ app.include_router(api_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+# Lightweight platform health probe (K8s / load balancer)
+@app.get("/health")
+async def health_probe():
+    return {"status": "ok"}
+
+
 # ---------- Startup Seed
 @app.on_event("startup")
 async def seed_data():
@@ -1613,11 +1744,9 @@ async def seed_data():
     else:
         logger.warning("Admin seed skipped: ADMIN_EMAIL/ADMIN_MOBILE/ADMIN_PASSWORD not fully configured in environment")
 
-    # Reseed products only if collection is empty or all products are original untouched seeds
+    # Reseed products only on truly empty collection (production-safe: never destroy existing data)
     count = await db.products.count_documents({})
-    admin_edited = await db.products.count_documents({"admin_edited": True})
-    if count == 0 or (admin_edited == 0 and count > 0 and not await db.settings.find_one({"key": "seeded"})):
-        await db.products.delete_many({})
+    if count == 0:
         docs = []
         for p in SEED_PRODUCTS:
             docs.append({
@@ -1633,15 +1762,18 @@ async def seed_data():
         if docs:
             await db.products.insert_many(docs)
             await db.settings.update_one({"key": "seeded"}, {"$set": {"key": "seeded", "at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
-            logger.info(f"Seeded {len(docs)} products")
+            logger.info(f"Seeded {len(docs)} products (empty collection)")
     else:
-        logger.info(f"Skipping product reseed: {admin_edited} admin edits detected across {count} products")
+        logger.info(f"Skipping product seed: {count} products already exist")
 
-    # Seed editorial sections
-    await db.editorials.delete_many({})
-    for e in DEFAULT_EDITORIALS:
-        await db.editorials.insert_one({**e, "created_at": datetime.now(timezone.utc).isoformat()})
-    logger.info(f"Seeded {len(DEFAULT_EDITORIALS)} editorial sections")
+    # Seed editorial sections ONLY on empty collection (never destroy admin edits)
+    ed_count = await db.editorials.count_documents({})
+    if ed_count == 0:
+        for e in DEFAULT_EDITORIALS:
+            await db.editorials.insert_one({**e, "created_at": datetime.now(timezone.utc).isoformat()})
+        logger.info(f"Seeded {len(DEFAULT_EDITORIALS)} editorial sections (empty collection)")
+    else:
+        logger.info(f"Skipping editorial seed: {ed_count} editorials already exist")
 
 
 @app.on_event("shutdown")
