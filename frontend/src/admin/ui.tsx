@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, Pressable, ActivityIndicator, StyleSheet, ViewStyle, TextStyle, StyleProp } from "react-native";
+import { View, Text, Pressable, ActivityIndicator, StyleSheet, ViewStyle, StyleProp } from "react-native";
 import Feather from "@react-native-vector-icons/feather";
 import { useAdminTheme } from "@/src/admin/theme";
 

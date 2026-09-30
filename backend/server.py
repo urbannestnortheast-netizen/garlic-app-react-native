@@ -107,6 +107,17 @@ class LoginIn(BaseModel):
     password: str
 
 
+class VariantIn(BaseModel):
+    id: str = ""              # client-supplied uuid or "" to generate server-side
+    color: str = ""           # e.g. "Terracotta"
+    color_hex: str = ""       # e.g. "#B45F3B" for visual swatch (optional)
+    size: str = ""            # e.g. "Small", "12 inch", "M"
+    sku: str = ""             # inventory code
+    stock: int = 0
+    price_delta: float = 0    # +/- vs base price; e.g. -100 or +200
+    image: str = ""           # optional variant image (base64 or url)
+
+
 class ProductIn(BaseModel):
     name: str
     category: str            # parent: dining|kitchen|decor|bath|soft-furnishing|accessories
@@ -122,6 +133,7 @@ class ProductIn(BaseModel):
     collection: Optional[str] = ""   # curated collection slug
     gift_persons: List[str] = []     # women, men, kids, couples...
     gift_occasions: List[str] = []   # birthday, anniversary, housewarming...
+    variants: List[VariantIn] = []   # optional colour/size variants with independent stock
 
 
 class WishlistToggleIn(BaseModel):
@@ -621,9 +633,36 @@ async def get_product(product_id: str):
     return {**item, **summary}
 
 
+def _normalize_variants(variants: list) -> list:
+    """Ensure every variant has an id and non-negative stock. Trim whitespace."""
+    out = []
+    for v in variants or []:
+        vd = dict(v)
+        vd["id"] = (vd.get("id") or "").strip() or str(uuid.uuid4())
+        vd["color"] = (vd.get("color") or "").strip()
+        vd["color_hex"] = (vd.get("color_hex") or "").strip()
+        vd["size"] = (vd.get("size") or "").strip()
+        vd["sku"] = (vd.get("sku") or "").strip()
+        try:
+            vd["stock"] = max(0, int(vd.get("stock") or 0))
+        except (TypeError, ValueError):
+            vd["stock"] = 0
+        try:
+            vd["price_delta"] = float(vd.get("price_delta") or 0)
+        except (TypeError, ValueError):
+            vd["price_delta"] = 0.0
+        vd["image"] = vd.get("image") or ""
+        out.append(vd)
+    return out
+
+
 @api_router.post("/products")
 async def create_product(data: ProductIn, admin: dict = Depends(require_admin)):
     doc = data.model_dump()
+    doc["variants"] = _normalize_variants(doc.get("variants", []))
+    # If variants exist, the aggregate stock is the sum of variant stocks.
+    if doc["variants"]:
+        doc["stock"] = sum(v["stock"] for v in doc["variants"])
     doc["id"] = str(uuid.uuid4())
     doc["admin_edited"] = True
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
@@ -635,6 +674,9 @@ async def create_product(data: ProductIn, admin: dict = Depends(require_admin)):
 @api_router.put("/products/{product_id}")
 async def update_product(product_id: str, data: ProductIn, admin: dict = Depends(require_admin)):
     payload = data.model_dump()
+    payload["variants"] = _normalize_variants(payload.get("variants", []))
+    if payload["variants"]:
+        payload["stock"] = sum(v["stock"] for v in payload["variants"])
     payload["admin_edited"] = True
     updated = await db.products.find_one_and_update(
         {"id": product_id}, {"$set": payload},

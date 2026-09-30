@@ -138,7 +138,8 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Admin Panel Phase 2 — Inventory, Customers, Reviews, Promotions"
+    - "Product variants (color + size + per-variant stock/price/image)"
+    - "Deployment blockers fixed (non-destructive seed, /health, .gitignore)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -146,42 +147,50 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Admin Panel Phase 2 built. Four new admin sections added + backend endpoints.
+      NEW: Product variants + deployment fixes.
 
-      NEW BACKEND ENDPOINTS (all admin-only in /app/backend/server.py):
-      - PATCH /api/admin/products/{product_id}/stock   body: {stock: int>=0}
-      - GET   /api/admin/customers                     → users with orders_count, total_spent (paid+shipped+delivered), last_order_at
-      - GET   /api/admin/customers/{customer_id}       → user + orders + orders_count + total_spent + points_balance
-      - GET   /api/admin/reviews                       → all reviews hydrated with product_name/product_image
-      - DELETE /api/admin/reviews/{review_id}          → deletes + recomputes product's avg_rating and reviews_count
+      BACKEND CHANGES (/app/backend/server.py):
+      - Added `VariantIn` Pydantic model (id/color/color_hex/size/sku/stock/price_delta/image).
+      - `ProductIn` now has `variants: List[VariantIn] = []`.
+      - `_normalize_variants()` helper: assigns UUIDs to blank ids, coerces stock >= 0, trims strings.
+      - `POST /api/products` + `PUT /api/products/{id}` now normalise variants and RECOMPUTE `product.stock = sum(variants.stock)` when variants exist. Otherwise `stock` is respected as-is.
+      - Non-destructive seed on startup (line ~1740): only inserts when collection is empty. Removed `delete_many({})` for products and editorials.
+      - Added `/health` endpoint on `app` (not `api_router`) returning `{"status": "ok"}` for K8s probes.
+      - `/app/.gitignore` cleaned: removed `.env`, `.env.*`, `*.env` blocks so deploy pipeline gets them.
+      Deployment agent re-check: PASS (0 findings).
 
-      NEW FRONTEND ROUTES:
-      - /admin/inventory     — search + 4 filters (All/Low/Out/In), quick +/- stepper per product, dirty state, SAVE pill
-      - /admin/customers     — search, list cards with initials avatar, orders_count + total_spent badges, last order date
-      - /admin/customer/[id] — profile card with Call/Email actions, contact card, 3 stat cards (Orders/Total/Points), orders list
-      - /admin/reviews       — search + 6 rating filters (All/★5/★4/★3/★1-2/Photos), review cards with stars, product tap → product edit, photos row, delete with confirm
-      - /admin/promotions    — coupon list + FAB (+), each card shows discount summary/min-order/expiry/active badge; delete with confirm. Bottom-sheet form for creating coupons (code, percent/flat toggle, value, min_order, max_discount for percent, expires_at, active switch)
+      FRONTEND CHANGES:
+      - NEW `/app/frontend/src/admin/variants.tsx` — `VariantSection` component with add/edit/remove, color swatch quick-pick (10 curated colors), size, SKU, stock, +/- price delta, optional variant image via expo-image-picker.
+      - `product-editor.tsx` now imports `VariantSection`, includes `variants: Variant[]` in the editable form, sends it in payload, and shows the section between "PRODUCT DETAILS" and "VISIBILITY".
+      - Inventory section: when `variants.length > 0`, the base "Stock quantity" field becomes disabled and shows the auto-summed total with a hint. When no variants, it stays required and editable (with a new hint suggesting variants).
+      - No changes to storefront (customer-facing variant picker deferred to a later iteration).
 
-      MORE MENU wired up — Inventory/Customers/Reviews/Promotions now link to real screens instead of "Coming soon".
+      Verified manually:
+      - POST /api/products with 3 variants (Terracotta S 4pcs, Sage S 7pcs price +50, Cream L 0pcs +100) → returns product with stock=11, each variant gets a fresh uuid, price_delta preserved.
+      - Editor visual: new product form renders header, images, basic, inventory, details, and variants sections cleanly (screenshot at /tmp/variants_editor.png).
 
-      Please regression + verify (viewport 390x844):
+      PLEASE TEST (viewport 390x844, credentials admin@garlic.app / Admin@123):
 
       BACKEND
-      B1. Login as admin (admin@garlic.app / Admin@123). Hit each new endpoint via the app:
-        - GET /api/admin/customers → 200, array of customers, each has `orders_count` and `total_spent` numeric.
-        - GET /api/admin/customers/{customer_id} for any customer → 200, has `user`, `orders`, `orders_count`, `total_spent`, `points_balance`.
-        - GET /api/admin/reviews → 200 array (may be empty). Any items should have `product_name` and `product_image` fields (hydrated).
-        - PATCH /api/admin/products/{product_id}/stock with body {stock: 42} → 200, returns product with new stock.
-        - PATCH with body {stock: -1} → 400 "Stock cannot be negative".
-        - DELETE /api/admin/reviews/{review_id} for a real review id → 200; product's avg_rating recomputes.
-      B2. Auth check: same endpoints hit without admin token → 401 or 403.
+      B1. POST /api/products with 2 variants and no top-level stock → response has stock == sum(variants), each variant has id, color_hex preserved.
+      B2. PUT /api/products/{id} to reduce a variant stock to 0 → other variant unaffected, total stock recomputed.
+      B3. POST with negative variant stock → normalised to 0 (not rejected). Confirm.
+      B4. Restart backend supervisor → confirm seeded products/editorials are NOT wiped. Existing admin edits persist.
+      B5. `curl http://localhost:8001/health` → 200 `{"status": "ok"}`.
+      B6. Non-admin JWT hitting POST /api/products with variants → 401/403.
 
       FRONTEND
-      F1. Login as admin → dashboard. Tap More tab.
-      F2. Tap "Inventory" row → screen loads with product list. Filter "Low Stock" applies. Search "cushion" filters. Tap + or − on a stepper — the SAVE pill appears next to that row. Tap SAVE → row updates, badge changes. Screenshot.
-      F3. Back → tap "Customers" → list loads. Tap first customer → detail loads with initials avatar, contact rows, 3 stat cards, orders list. Tap Call → on web should show alert; on native it would open dialer. Screenshot.
-      F4. Back → tap "Reviews" → list loads (may be empty). If present, tap a review's product row → navigates to `/admin/product/[id]`. Back → tap Delete on a review → confirmation → confirmed → item disappears. Screenshot.
-      F5. Back → tap "Promotions" → list loads (may be empty). Tap + → form sheet opens. Fill code "PHASE2", pick "% Percent", value 10, min_order 500, max_discount 200, active on. Tap Activate → sheet closes, "PHASE2" appears in list with "Active" badge. Tap Delete → confirm → row disappears. Screenshot.
-      F6. Regression: dashboard still renders, orders tab still renders, product editor still saves. Bottom tab bar still shows exactly 4 tabs (Dashboard/Orders/Products/More) — no new tabs leaked.
+      F1. Sign in admin → dashboard. Tap Products tab → + button → New product form.
+      F2. Scroll to "VARIANTS (COLOR & SIZE)" section — should show empty-state card with "Add first variant" button.
+      F3. Tap `add-variant-btn` (top-right plus) OR "Add first variant" → variant editor bottom-sheet opens.
+      F4. In sheet: tap a color swatch (e.g. terracotta) → auto-fills "Color name" as "Terracotta" and sets swatch. Enter Size "Small", Stock 5, Price adjustment 0. Tap Save (`variant-save-btn`).
+      F5. Sheet closes → variant row appears in list showing color name, size, "5 in stock" badge, and a color-tinted image tile.
+      F6. Repeat: add second variant "Sage · Medium · 3 in stock · +₹200". Third variant "Cream · Large · 0 in stock" — should show "Out of stock" (danger) badge.
+      F7. Inventory section: base "Stock quantity" input should be disabled and show "8" (5+3+0) with the hint "Auto-calculated from variants below…".
+      F8. Fill name "Variant Test Bowl", price 899. Tap Publish → returns to /admin/products, new item visible.
+      F9. Reopen the product from the list → editor loads pre-populated. Variants section shows the 3 variants. Tap the middle variant row → sheet reopens with values pre-filled. Edit stock 3 → 10. Tap Save → row updates. Tap Publish → list refreshes.
+      F10. GET the product via API to confirm variant stock persisted (Sage now 10). Total stock 15.
+      F11. Delete the test product (from products list → more menu → Delete → confirm).
+      F12. Regression: existing admin flows still work — dashboard KPIs, orders list, order detail, customers list (from More), reviews, promotions.
 
-      Please report to /app/test_reports/iteration_14.json.
+      Report to /app/test_reports/iteration_15.json.

@@ -34,6 +34,8 @@ export default function AdminProducts() {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
   const [menuOpen, setMenuOpen] = useState<string | null>(null); // productId of open menu
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const styles = useStyles();
 
   const load = useCallback(async () => {
@@ -45,6 +47,7 @@ export default function AdminProducts() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setConfirmingDelete(false); }, [menuOpen]);
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -55,26 +58,23 @@ export default function AdminProducts() {
     });
   }, [items, q, cat]);
 
-  const remove = async (product: any) => {
-    const doIt = async () => {
-      try {
-        await api(`/products/${product.id}`, { method: "DELETE", auth: true });
-        setMenuOpen(null);
-        load();
-      } catch (e: any) {
-        const msg = e?.message || "Delete failed";
-        if (Platform.OS === "web") { /* @ts-ignore */ window.alert(msg); }
-        else { Alert.alert("Error", msg); }
-      }
-    };
-    if (Platform.OS === "web") {
-      // @ts-ignore
-      if (window.confirm(`Delete "${product.name}"?\nThis cannot be undone.`)) doIt();
-    } else {
-      Alert.alert("Delete product?", `"${product.name}" will be permanently removed.`, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: doIt },
-      ]);
+  const closeMenu = () => {
+    setMenuOpen(null);
+    setConfirmingDelete(false);
+  };
+
+  const performDelete = async (product: any) => {
+    setDeleting(true);
+    try {
+      await api(`/products/${product.id}`, { method: "DELETE", auth: true });
+      closeMenu();
+      load();
+    } catch (e: any) {
+      const msg = e?.message || "Delete failed";
+      if (Platform.OS === "web") { /* @ts-ignore */ window.alert(msg); }
+      else { Alert.alert("Error", msg); }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -199,11 +199,11 @@ export default function AdminProducts() {
                   </View>
                 </Pressable>
                 <Pressable
-                  testID={`product-more-${p.id}`}
                   onPress={() => setMenuOpen(p.id)}
                   hitSlop={12}
                   accessibilityRole="button"
                   accessibilityLabel={`More actions for ${p.name}`}
+                  testID={`product-more-${p.id}`}
                   style={styles.moreBtn}
                 >
                   <Feather name="more-vertical" size={18} color={t.colors.mutedText} />
@@ -215,8 +215,8 @@ export default function AdminProducts() {
       )}
 
       {/* Bottom-sheet actions */}
-      <Modal transparent visible={!!menuOpen} animationType="slide" onRequestClose={() => setMenuOpen(null)}>
-        <Pressable style={styles.sheetBackdrop} onPress={() => setMenuOpen(null)} accessibilityLabel="Close menu" />
+      <Modal transparent visible={!!menuOpen} animationType="slide" onRequestClose={() => { if (!deleting) closeMenu(); }}>
+        <Pressable style={styles.sheetBackdrop} onPress={() => { if (!deleting) closeMenu(); }} accessibilityLabel="Close menu" />
         <View style={styles.sheet}>
           <View style={styles.sheetHandle} />
           {(() => {
@@ -226,26 +226,51 @@ export default function AdminProducts() {
               <>
                 <Text style={[t.type.h1, { color: t.colors.onSurface, marginBottom: 4 }]} numberOfLines={1}>{product.name}</Text>
                 <Text style={[t.type.body, { color: t.colors.onSurfaceSecondary, marginBottom: 12 }]}>
-                  Choose an action
+                  {confirmingDelete ? "This cannot be undone." : "Choose an action"}
                 </Text>
-                <Pressable
-                  onPress={() => { setMenuOpen(null); router.push(`/admin/product/${product.id}` as any); }}
-                  accessibilityRole="button" accessibilityLabel="Edit product"
-                  style={styles.actionRow}
-                >
-                  <Feather name="edit-2" size={18} color={t.colors.onSurface} />
-                  <Text style={[t.type.bodyLg, { color: t.colors.onSurface, flex: 1 }]}>Edit</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => remove(product)}
-                  accessibilityRole="button" accessibilityLabel="Delete product"
-                  style={[styles.actionRow, { backgroundColor: t.colors.dangerSoft }]}
-                >
-                  <Feather name="trash-2" size={18} color={t.colors.danger} />
-                  <Text style={[t.type.bodyLg, { color: t.colors.danger, flex: 1, fontFamily: "DMSansMedium" }]}>Delete</Text>
-                </Pressable>
+                {!confirmingDelete && (
+                  <Pressable
+                    onPress={() => { closeMenu(); router.push(`/admin/product/${product.id}` as any); }}
+                    accessibilityRole="button" accessibilityLabel="Edit product"
+                    testID={`product-edit-action-${product.id}`}
+                    style={styles.actionRow}
+                  >
+                    <Feather name="edit-2" size={18} color={t.colors.onSurface} />
+                    <Text style={[t.type.bodyLg, { color: t.colors.onSurface, flex: 1 }]}>Edit</Text>
+                  </Pressable>
+                )}
+                {confirmingDelete ? (
+                  <Pressable
+                    onPress={() => performDelete(product)}
+                    disabled={deleting}
+                    accessibilityRole="button" accessibilityLabel="Confirm delete product"
+                    testID={`product-delete-confirm-${product.id}`}
+                    style={[styles.actionRow, { backgroundColor: t.colors.danger }]}
+                  >
+                    <Feather name="trash-2" size={18} color="#FFFFFF" />
+                    <Text style={[t.type.bodyLg, { color: "#FFFFFF", flex: 1, fontFamily: "DMSansBold" }]}>
+                      {deleting ? "Deleting…" : "Yes, delete permanently"}
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    onPress={() => setConfirmingDelete(true)}
+                    accessibilityRole="button" accessibilityLabel="Delete product"
+                    testID={`product-delete-action-${product.id}`}
+                    style={[styles.actionRow, { backgroundColor: t.colors.dangerSoft }]}
+                  >
+                    <Feather name="trash-2" size={18} color={t.colors.danger} />
+                    <Text style={[t.type.bodyLg, { color: t.colors.danger, flex: 1, fontFamily: "DMSansMedium" }]}>Delete</Text>
+                  </Pressable>
+                )}
                 <View style={{ marginTop: 12 }}>
-                  <AdminButton label="Cancel" variant="secondary" fullWidth onPress={() => setMenuOpen(null)} />
+                  <AdminButton
+                    label={confirmingDelete ? "Keep product" : "Cancel"}
+                    variant="secondary"
+                    fullWidth
+                    onPress={closeMenu}
+                    testID="product-action-cancel"
+                  />
                 </View>
               </>
             );

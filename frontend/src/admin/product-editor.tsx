@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import { View, Text, ScrollView, Pressable, StyleSheet, KeyboardAvoidingView, Platform, Alert, Modal, Switch } from "react-native";
 import Feather from "@react-native-vector-icons/feather";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -8,6 +8,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useAdminTheme } from "@/src/admin/theme";
 import { AdminButton, AdminCard } from "@/src/admin/ui";
 import { AdminField } from "@/src/admin/field";
+import { VariantSection, Variant } from "@/src/admin/variants";
 import { api } from "@/src/api/client";
 
 const CATEGORIES = ["dining", "kitchen", "decor", "bath", "soft-furnishing", "accessories"];
@@ -26,6 +27,7 @@ export type EditorProduct = {
   stock: string;
   featured: boolean;
   collection?: string;
+  variants: Variant[];
 };
 
 export function ProductEditor({
@@ -53,6 +55,7 @@ export function ProductEditor({
     stock: initial?.stock != null ? String(initial.stock) : "100",
     featured: initial?.featured || false,
     collection: initial?.collection || "",
+    variants: Array.isArray(initial?.variants) ? initial.variants : [],
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -140,6 +143,7 @@ export function ProductEditor({
         collection: form.collection?.trim() || "",
         gift_persons: [],
         gift_occasions: [],
+        variants: form.variants,
       };
       if (isEdit) {
         await api(`/products/${productId}`, { method: "PUT", auth: true, body: payload });
@@ -299,7 +303,17 @@ export function ProductEditor({
           {/* Inventory */}
           <AdminCard>
             <Text style={[t.type.h3, { color: t.colors.mutedText, marginBottom: 12 }]}>INVENTORY</Text>
-            <AdminField label="Stock quantity" required value={form.stock} onChangeText={(v) => set("stock", v)} placeholder="0" keyboardType="numeric" error={errors.stock} testID="product-stock-input" />
+            {form.variants.length > 0 ? (
+              <AdminField
+                label="Stock quantity"
+                value={String(form.variants.reduce((s, v) => s + (v.stock || 0), 0))}
+                onChangeText={() => {}}
+                disabled
+                hint="Auto-calculated from variants below. Adjust each variant's stock individually."
+              />
+            ) : (
+              <AdminField label="Stock quantity" required value={form.stock} onChangeText={(v) => set("stock", v)} placeholder="0" keyboardType="numeric" error={errors.stock} testID="product-stock-input" hint="Or add color/size variants below for per-option stock." />
+            )}
           </AdminCard>
 
           {/* Specs */}
@@ -310,6 +324,12 @@ export function ProductEditor({
               <AdminField label="Dimensions" value={form.dimensions || ""} onChangeText={(v) => set("dimensions", v)} placeholder='e.g. 12" x 6" x 3"' />
             </View>
           </AdminCard>
+
+          {/* Variants (color / size) */}
+          <VariantSection
+            variants={form.variants}
+            onChange={(next) => set("variants", next)}
+          />
 
           {/* Visibility */}
           <AdminCard>
